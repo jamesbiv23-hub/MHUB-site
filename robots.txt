@@ -1,0 +1,3 @@
+User-agent: *
+Allow: /
+Sitemap: https://jamesbiv23-hub.github.io/MHUB-site/sitemap.xml
