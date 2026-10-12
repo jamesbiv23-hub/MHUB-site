@@ -173,7 +173,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 
 <nav class="top"><div class="wrap">
   <a class="logo" href="#top">MHUB<span>.</span></a>
-  <div class="nav-links"><a class="hide-sm" href="#demo">Try it</a><a class="hide-sm" href="#features">Features</a><a class="hide-sm" href="#faq">FAQ</a><a class="btn sm hub-link" href="#">Open MHUB <span class="arr">→</span></a></div>
+  <div class="nav-links"><a class="hide-sm" href="#demo">Try it</a><a class="hide-sm" href="#features">Features</a><a class="hide-sm" href="app.html#cards">Flashcards</a><a class="hide-sm" href="#faq">FAQ</a><a class="btn sm hub-link" href="#">Open MHUB <span class="arr">→</span></a></div>
 </div></nav>
 
 <main id="top">
@@ -181,7 +181,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <div class="eyebrow">AI MCAT study hub</div>
     <h1>Every miss becomes a <em>rule</em>.</h1>
     <p class="lede">MHUB learns how you study, names the trap behind every question you get wrong, and turns it into a habit. Tutor, flashcards, topic map and score plan in one place, set up around you by AI.</p>
-    <div class="cta-row"><a class="btn hub-link" href="#">Create your MHUB <span class="arr">→</span></a><a class="btn ghost" href="#demo">Try a trap question</a><span class="cta-note">Free with a Claude account</span></div>
+    <div class="cta-row"><a class="btn hub-link" href="#">Create your MHUB <span class="arr">→</span></a><a class="btn ghost" href="#demo">Try a trap question</a><span class="cta-note">Free. No account needed to start.</span></div>
 
     <div class="ruler-card" aria-label="Score target picker">
       <div class="ruler-head"><div><div class="q">Drag to your target score</div><div class="val" id="tval">515</div></div><div class="q" id="tnote" style="text-align:right;max-width:30ch"></div></div>
@@ -239,7 +239,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <div class="eyebrow">How it works</div>
     <h2>From signup to studying in five minutes.</h2>
     <div class="steps" style="margin-top:28px">
-      <div class="step"><div class="n">01</div><h3>Open MHUB</h3><p>Sign in with a free Claude account. Your hub and everything in it is private to you.</p></div>
+      <div class="step"><div class="n">01</div><h3>Open MHUB</h3><p>No signup to start. Your hub saves privately in your browser, and you can back it up any time.</p></div>
       <div class="step"><div class="n">02</div><h3>Answer the setup</h3><p>The AI builds your profile, topic map, tutor style, plan and starter flashcards from your answers.</p></div>
       <div class="step"><div class="n">03</div><h3>Study and log</h3><p>Do your AAMC and UWorld practice. Send each miss to the tutor; MHUB logs the trap and schedules the review.</p></div>
     </div>
@@ -249,8 +249,8 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     <div class="eyebrow">FAQ</div>
     <h2>Questions</h2>
     <div class="faq">
-      <details><summary>Is MHUB free?</summary><p>MHUB itself is free. It runs inside Claude, so you sign in with a Claude account, and the AI tutor uses your own Claude plan's usage.</p></details>
-      <details><summary>Who can see my data?</summary><p>Only you. Each account's mistakes, scores, flashcards, notes and settings are stored privately for that account.</p></details>
+      <details><summary>Is MHUB free?</summary><p>Yes. Open the app and start: your trap log, flashcards, topic map, scores and plan all run right in your browser. The AI tutor and AI setup run inside Claude, so those use a free Claude account.</p></details>
+      <details><summary>Who can see my data?</summary><p>Only you. In the web app your data is saved in your own browser, not on a server. Use Plan → Download backup to move it to another device.</p></details>
       <details><summary>Can I bring my Anki deck?</summary><p>Yes. Export it from Anki as "Notes in Plain Text (.txt)" and import it in the Flashcards tab. Reviews use spaced repetition inside MHUB.</p></details>
       <details><summary>Does it include AAMC or UWorld questions?</summary><p>No. MHUB works alongside the practice you already use. The tutor writes original MCAT-style questions, and your log stores your own notes on what you missed.</p></details>
       <details><summary>Does it work on my phone?</summary><p>Yes. MHUB works in any modern browser on phone, tablet or computer.</p></details>
@@ -268,8 +268,8 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
 
 <script>
 (function () {
-  const HUB = 'https://claude.ai/artifact/XnXFUXoPTjgZAcDm5YoZfx';
-  document.querySelectorAll('.hub-link').forEach(a => { a.href = HUB; a.target = '_blank'; a.rel = 'noopener'; });
+  const HUB = 'app.html';
+  document.querySelectorAll('.hub-link').forEach(a => { a.href = HUB; });
   document.getElementById('yr').textContent = new Date().getFullYear();
 
   // ---- score ruler ----
@@ -314,7 +314,7 @@ footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wr
     const q = QS[qi], a = answered[qi];
     qcard.innerHTML = `<div class="qmeta"><span>${q.sec}</span><span>Question ${qi + 1} of ${QS.length}</span></div><p class="qstem">${q.stem}</p>
       <div class="opts">${q.opts.map((o, i) => `<button class="opt ${a != null ? (i === q.ans ? 'right' : i === a ? 'wrong' : '') : ''}" data-i="${i}" ${a != null ? 'disabled' : ''}><span class="l">${'ABCD'[i]}</span><span>${o}</span></button>`).join('')}</div>
-      <div class="qnav"><div class="dots">${QS.map((_, i) => `<i class="${i === qi ? 'on' : ''}"></i>`).join('')}</div><span style="display:flex;gap:8px">${qi > 0 ? '<button class="btn ghost sm" id="qprev">Back</button>' : ''}${qi < QS.length - 1 ? `<button class="btn sm" id="qnext" ${a == null ? 'disabled style="opacity:.45"' : ''}>Next question</button>` : (a != null ? '<a class="btn sm hub-link" href="' + HUB + '" target="_blank" rel="noopener">Start logging yours →</a>' : '')}</span></div>`;
+      <div class="qnav"><div class="dots">${QS.map((_, i) => `<i class="${i === qi ? 'on' : ''}"></i>`).join('')}</div><span style="display:flex;gap:8px">${qi > 0 ? '<button class="btn ghost sm" id="qprev">Back</button>' : ''}${qi < QS.length - 1 ? `<button class="btn sm" id="qnext" ${a == null ? 'disabled style="opacity:.45"' : ''}>Next question</button>` : (a != null ? '<a class="btn sm" href="app.html#log">Start logging yours →</a>' : '')}</span></div>`;
     qcard.querySelectorAll('.opt').forEach(b => b.addEventListener('click', () => { answered[qi] = +b.dataset.i; renderQ(); renderLog(); }));
     const n = document.getElementById('qnext'); if (n) n.addEventListener('click', () => { if (answered[qi] != null) { qi++; renderQ(); renderLog(); } });
     const p = document.getElementById('qprev'); if (p) p.addEventListener('click', () => { qi--; renderQ(); renderLog(); });

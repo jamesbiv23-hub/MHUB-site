@@ -8,3 +8,8 @@ Public website for MHUB, an AI MCAT study hub that personalizes itself to each s
 Hosted with GitHub Pages from the `main` branch.
 
 MHUB is an independent study tool and is not affiliated with or endorsed by the AAMC or UWorld. MCAT is a registered trademark of the AAMC.
+
+## Files
+- `index.html`: homepage with live demos
+- `app.html`: the MHUB app (Dashboard, Flashcards, Topics, Mistakes, Scores, Plan). Built by `python3 build.py` from `src/hub-body.html` (the same Hub that runs on Claude) plus `src/local-runtime.js`, which saves data in the visitor's browser.
+- The AI tutor and AI setup run in the Claude-hosted version of MHUB; the web app links there.

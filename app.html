@@ -1,0 +1,1282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MHUB App · Your MCAT study hub</title>
+<meta name="description" content="Your MHUB: trap log, spaced-repetition flashcards, topic map, score trend and study plan for the MCAT.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2312151C'/%3E%3Ctext x='32' y='44' font-family='Arial Black,Arial' font-size='34' font-weight='900' text-anchor='middle' fill='%23fff'%3EM%3C/text%3E%3Ccircle cx='50' cy='42' r='4' fill='%232F5BEA'/%3E%3C/svg%3E">
+<style>[hidden]{display:none!important}body{margin:0}img{max-width:100%}:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}</style>
+<script>
+// MHUB local runtime: gives the Hub the same data API it uses on Claude,
+// backed by this browser's storage (localStorage), so the app runs on any website.
+(function () {
+  const KEY = 'mhub-db-v1';
+  let store = {};
+  try { store = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { store = {}; }
+  let saveTimer = null;
+  function persist() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try { localStorage.setItem(KEY, JSON.stringify(store)); }
+      catch (e) { window.dispatchEvent(new CustomEvent('mhub-storage-full')); }
+    }, 80);
+  }
+  const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
+  function deepMerge(a, b) { const out = isObj(a) ? { ...a } : {}; for (const k of Object.keys(b)) out[k] = isObj(b[k]) && isObj(out[k]) ? deepMerge(out[k], b[k]) : clone(b[k]); return out; }
+  function clone(v) { return v === undefined ? undefined : JSON.parse(JSON.stringify(v)); }
+  function split(path) { const i = path.lastIndexOf('/'); return [path.slice(0, i), path.slice(i + 1)]; }
+  const listeners = new Set();
+  function notify(colPath) { setTimeout(() => listeners.forEach(l => { if (l.col === colPath) l.fire(); }), 0); }
+  function snapDoc(id, data) { const d = data === undefined ? undefined : Object.freeze(clone(data)); return { id, exists: d !== undefined, data: () => d, metadata: { fromCache: false, hasPendingWrites: false } }; }
+  function err(code, message) { const e = new Error(message); e.code = code; return e; }
+
+  function docRef(path) {
+    const [c, id] = split(path);
+    return {
+      id, path,
+      async get() { return snapDoc(id, (store[c] || {})[id]); },
+      async set(data) { if (!isObj(data)) throw err('invalid_argument', 'body must be an object'); (store[c] = store[c] || {})[id] = clone(data); persist(); notify(c); },
+      async update(data) { const cur = (store[c] || {})[id]; if (cur === undefined) throw err('invalid_argument', 'document does not exist'); store[c][id] = deepMerge(cur, data); persist(); notify(c); },
+      async delete() { if (store[c]) { delete store[c][id]; persist(); notify(c); } },
+      onSnapshot(next) { const l = { col: c, fire: () => next(snapDoc(id, (store[c] || {})[id])) }; listeners.add(l); setTimeout(l.fire, 0); return () => listeners.delete(l); },
+      collection(sub) { return colRef(path + '/' + sub); }
+    };
+  }
+  function colRef(path) {
+    const query = (filters = [], order = null, lim = 0) => ({
+      where(f, op, v) { return query([...filters, [f, op, v]], order, lim); },
+      orderBy(f, dir = 'asc') { return query(filters, [f, dir], lim); },
+      limit(n) { return query(filters, order, n); },
+      _run() {
+        let docs = Object.entries(store[path] || {}).map(([id, d]) => ({ id, d }));
+        const ops = { '==': (a, b) => a === b, '!=': (a, b) => a !== b, '<': (a, b) => a < b, '<=': (a, b) => a <= b, '>': (a, b) => a > b, '>=': (a, b) => a >= b, in: (a, b) => b.includes(a), 'not-in': (a, b) => !b.includes(a), 'array-contains': (a, b) => Array.isArray(a) && a.includes(b) };
+        filters.forEach(([f, op, v]) => { docs = docs.filter(x => ops[op] && ops[op](x.d[f], v)); });
+        if (order) docs.sort((a, b) => { const x = a.d[order[0]], y = b.d[order[0]]; const r = x === y ? 0 : x === undefined ? 1 : y === undefined ? -1 : x < y ? -1 : 1; return order[1] === 'desc' ? -r : r; });
+        else docs.sort((a, b) => a.id < b.id ? -1 : 1);
+        if (lim) docs = docs.slice(0, lim);
+        const out = docs.map(x => snapDoc(x.id, x.d));
+        return { docs: out, size: out.length, empty: !out.length, docChanges: () => out.map((doc, i) => ({ type: 'added', doc, oldIndex: -1, newIndex: i })), metadata: { fromCache: false, hasPendingWrites: false } };
+      },
+      async get() { return this._run(); },
+      onSnapshot(next) { const self = this; const l = { col: path, fire: () => next(self._run()) }; listeners.add(l); setTimeout(l.fire, 0); return () => listeners.delete(l); }
+    });
+    const q = query();
+    return Object.assign(q, {
+      path,
+      doc(id) { return docRef(path + '/' + (id || ('x' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)))); },
+      async add(data) { const r = this.doc(); await r.set(data); return r; }
+    });
+  }
+  const db = { doc: docRef, collection: colRef };
+  const user = { async id() { return 'local'; }, async me() { return { name: '' }; }, async can() { return true; }, isOwner() { return true; }, canEdit() { return true; } };
+  const downloads = {
+    async save({ filename, data }) {
+      const blob = data instanceof Blob ? data : new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob); const a = document.createElement('a');
+      a.href = url; a.download = filename || 'mhub.json'; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    }
+  };
+  const caps = { db, user, downloads };
+  window.claude = { use: async (name) => caps[name] || null };
+  window.addEventListener('mhub-storage-full', () => { const t = document.getElementById('toast'); if (t) { t.textContent = 'This browser’s storage is full. Download a backup and remove old decks.'; t.hidden = false; } });
+})();
+
+</script>
+</head>
+<body>
+
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<style>
+/* Layout: one 860px column, sticky scrollable tab bar; each tab is a working panel. Personal data lives per viewer. */
+:root {
+  --bg: #F6F7F9; --surface: #FFFFFF; --surface-2: #EEF0F4;
+  --border: #E1E4EA; --border-strong: #C5CAD3;
+  --text: #12151C; --text-2: #5A6170; --text-3: #848A99;
+  --accent: #12151C; --accent-ink: #FFFFFF;
+  --line: #2F5BEA; --target: #D9662C;
+  --blue-bg: #E6F1FB; --blue-text: #0C447C;
+  --amber-bg: #FAEEDA; --amber-text: #633806;
+  --coral-bg: #FAECE7; --coral-text: #712B13;
+  --purple-bg: #EEEDFE; --purple-text: #3C3489;
+  --red-bg: #FAE7E7; --red-text: #8C2F2F;
+  --green-bg: #E5F2E6; --green-text: #24602A;
+  --m0: #E1E4EA; --m1: #E8B4A0; --m2: #E9CF8E; --m3: #A9CDA0; --m4: #5E9A63;
+  --danger: #B3261E;
+  --font: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --display: "Bricolage Grotesque", "Hanken Grotesk", -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --r: 10px;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0F1115; --surface: #171A20; --surface-2: #1F232B;
+  --border: #2A2F39; --border-strong: #3A404C;
+  --text: #EDEFF3; --text-2: #A8AFBD; --text-3: #7C8494;
+  --accent: #EDEFF3; --accent-ink: #0F1115;
+  --line: #7DA2FF; --target: #F29A66;
+  --blue-bg: #1C2C40; --blue-text: #A9CCF2;
+  --amber-bg: #3A2C15; --amber-text: #F0C98A;
+  --coral-bg: #3D2219; --coral-text: #F2B49E;
+  --purple-bg: #29264A; --purple-text: #C6C1F7;
+  --red-bg: #3E1F1F; --red-text: #F2AAAA;
+  --green-bg: #1D3320; --green-text: #A6D9AB;
+  --m0: #2A2F39; --m1: #7A4434; --m2: #7A6430; --m3: #4F7448; --m4: #79B97E;
+  --danger: #F2867E; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #0F1115; --surface: #171A20; --surface-2: #1F232B;
+  --border: #2A2F39; --border-strong: #3A404C;
+  --text: #EDEFF3; --text-2: #A8AFBD; --text-3: #7C8494;
+  --accent: #EDEFF3; --accent-ink: #0F1115;
+  --line: #7DA2FF; --target: #F29A66;
+  --blue-bg: #1C2C40; --blue-text: #A9CCF2;
+  --amber-bg: #3A2C15; --amber-text: #F0C98A;
+  --coral-bg: #3D2219; --coral-text: #F2B49E;
+  --purple-bg: #29264A; --purple-text: #C6C1F7;
+  --red-bg: #3E1F1F; --red-text: #F2AAAA;
+  --green-bg: #1D3320; --green-text: #A6D9AB;
+  --m0: #2A2F39; --m1: #7A4434; --m2: #7A6430; --m3: #4F7448; --m4: #79B97E;
+  --danger: #F2867E; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); line-height: 1.5; font-size: 14px; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 22px 16px 90px; }
+header.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+h1 { font-family: var(--display); font-size: 26px; font-weight: 700; margin: 0; letter-spacing: -0.02em; }
+h1 .dot { color: var(--line); }
+.sub { font-size: 13px; color: var(--text-2); margin: 2px 0 0; }
+.pill { font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 20px; border: 1px solid var(--border-strong); color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+nav.tabs { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); display: flex; gap: 2px; padding: 8px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; overflow-x: auto; scrollbar-width: none; }
+nav.tabs button { background: transparent; color: var(--text-2); border: none; padding: 7px 13px; border-radius: 20px; font: inherit; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; position: relative; }
+nav.tabs button[aria-selected="true"] { background: var(--accent); color: var(--accent-ink); }
+nav.tabs .badge { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 9px; background: var(--target); color: #fff; font-size: 10.5px; line-height: 17px; text-align: center; font-variant-numeric: tabular-nums; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--line); outline-offset: 2px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 16px; min-width: 0; }
+.stack { display: flex; flex-direction: column; gap: 16px; }
+.h { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+.h2 { font-family: var(--display); font-size: 17px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+.hint { font-size: 12px; color: var(--text-3); margin: 0; }
+.tiles { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+@media (max-width: 640px) { .tiles { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+.tile { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+button.tile { font: inherit; color: inherit; text-align: left; cursor: pointer; }
+button.tile:hover { border-color: var(--border-strong); }
+.tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+.tile .v { font-family: var(--display); font-size: 27px; font-weight: 650; font-variant-numeric: tabular-nums; line-height: 1.2; margin-top: 2px; }
+.tile .d { font-size: 12px; color: var(--text-2); }
+.grid2 { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 16px; }
+@media (max-width: 640px) { .grid2 { grid-template-columns: minmax(0,1fr); } }
+.chart-wrap { position: relative; }
+.chart-wrap svg { display: block; width: 100%; height: auto; overflow: visible; }
+.tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bars { display: flex; flex-direction: column; gap: 8px; }
+.bar-row { display: grid; grid-template-columns: minmax(0, 12rem) minmax(0,1fr) 2rem; align-items: center; gap: 10px; background: none; border: none; padding: 0; color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.bar-row .lbl { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar-bg { height: 9px; background: var(--surface-2); border-radius: 5px; overflow: hidden; }
+.bar-fill { display: block; height: 100%; background: var(--line); border-radius: 0 4px 4px 0; }
+.bar-row .n { text-align: right; color: var(--text-2); font-variant-numeric: tabular-nums; font-size: 12px; }
+.sec-bars { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; }
+@media (max-width: 520px) { .sec-bars { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+.sec-bar { border: 1px solid var(--border); border-radius: 10px; padding: 10px; }
+.sec-bar .nm { font-size: 12px; color: var(--text-2); }
+.sec-bar .sc { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.gauge { position: relative; height: 6px; background: var(--surface-2); border-radius: 3px; margin-top: 6px; }
+.gauge .f { position: absolute; left: 0; top: 0; bottom: 0; background: var(--line); border-radius: 3px; }
+.gauge .t { position: absolute; top: -3px; width: 2px; height: 12px; background: var(--target); }
+.tag { font-size: 10.5px; padding: 2px 8px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
+.tag-o { font-size: 10.5px; color: var(--text-2); border: 1px solid var(--border); padding: 2px 8px; border-radius: 20px; white-space: nowrap; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { font: inherit; font-size: 12px; padding: 4px 12px; border-radius: 20px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-2); cursor: pointer; }
+.chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+label { font-size: 12px; color: var(--text-2); display: block; margin-bottom: 4px; }
+input, select, textarea { width: 100%; padding: 8px 10px; border-radius: var(--r); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); font: inherit; font-size: 14px; }
+textarea { resize: vertical; min-height: 54px; }
+.form { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 10px 12px; }
+.form .full { grid-column: 1 / -1; }
+@media (max-width: 520px) { .form { grid-template-columns: minmax(0,1fr); } }
+.btn { font: inherit; font-size: 13px; font-weight: 550; padding: 9px 14px; border-radius: var(--r); border: 1px solid var(--accent); background: var(--accent); color: var(--accent-ink); cursor: pointer; white-space: nowrap; }
+.btn.ghost { background: transparent; color: var(--text); border-color: var(--border-strong); }
+.btn.sm { padding: 5px 10px; font-size: 12px; }
+.btn.danger { background: transparent; color: var(--danger); border-color: var(--danger); }
+.btn:disabled { opacity: .5; cursor: default; }
+details.logger summary { cursor: pointer; font-weight: 600; font-size: 14px; list-style: none; }
+details.logger summary::-webkit-details-marker { display: none; }
+details.logger summary::before { content: "+ "; color: var(--text-3); }
+details.logger[open] summary::before { content: "− "; }
+details.logger[open] summary { margin-bottom: 12px; }
+.entries { display: flex; flex-direction: column; gap: 9px; }
+.entry { border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; background: var(--surface); min-width: 0; }
+.entry-top { display: flex; justify-content: space-between; gap: 8px; align-items: flex-start; flex-wrap: wrap; margin-bottom: 6px; }
+.entry-tags { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; min-width: 0; }
+.entry .ex { font-size: 13px; font-weight: 550; }
+.entry .ev { font-size: 12.5px; font-style: italic; color: var(--text-2); margin: 0 0 6px; padding-left: 9px; border-left: 2px solid var(--border-strong); overflow-wrap: anywhere; }
+.entry .ls { font-size: 13px; margin: 0 0 4px; overflow-wrap: anywhere; }
+.entry .tr { font-size: 12.5px; margin: 0 0 4px; overflow-wrap: anywhere; }
+.tr b.bad { color: var(--red-text); font-weight: 600; }
+.tr b.good { color: var(--green-text); font-weight: 600; }
+.entry .meta, .meta { font-size: 11px; color: var(--text-3); margin: 4px 0 0; font-variant-numeric: tabular-nums; }
+.icon-btn { background: transparent; border: none; color: var(--text-3); font: inherit; font-size: 12px; padding: 3px 6px; cursor: pointer; border-radius: 6px; }
+.icon-btn:hover { color: var(--text); background: var(--surface-2); }
+.confirm { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--danger); }
+.count-line { font-size: 12px; color: var(--text-2); }
+.empty { font-size: 13px; color: var(--text-3); padding: 18px 0; text-align: center; margin: 0; }
+.recurring { background: var(--red-bg); color: var(--red-text); border-radius: 12px; padding: 14px; font-size: 13px; }
+.recurring ul { margin: 6px 0 0; padding-left: 18px; }
+.recurring li { margin-bottom: 6px; }
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+th { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); font-weight: 600; }
+td.num, th.num { text-align: right; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.spread { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: space-between; }
+.status { font-size: 12px; color: var(--text-3); margin: 0 0 10px; }
+.toast { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--accent); color: var(--accent-ink); padding: 8px 14px; border-radius: 20px; font-size: 13px; z-index: 20; max-width: calc(100vw - 32px); }
+.onboard { background: var(--surface); border: 1px solid var(--border); border-radius: 16px; padding: 20px; display: flex; flex-direction: column; gap: 18px; }
+.onboard .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--line); font-weight: 600; }
+.onboard .title { font-family: var(--display); font-size: 22px; font-weight: 700; letter-spacing: -0.02em; margin: 2px 0 4px; text-wrap: balance; }
+.ob-q { display: flex; flex-direction: column; gap: 8px; }
+.ob-q > .lbl { font-size: 13.5px; font-weight: 600; }
+.ob-grid4 { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; }
+@media (max-width: 520px) { .ob-grid4 { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+.conf-row { display: grid; grid-template-columns: 7.5rem minmax(0,1fr); gap: 10px; align-items: center; font-size: 13px; }
+.conf-row .chips .chip { padding: 4px 10px; }
+.ob-progress { font-size: 13px; color: var(--text-2); display: flex; flex-direction: column; gap: 4px; }
+.ob-progress .ok { color: var(--green-text); }
+.profile-sum { background: var(--surface-2); border-radius: 12px; padding: 12px 14px; font-size: 13.5px; }
+/* flashcards */
+.fc { min-height: 240px; display: flex; flex-direction: column; gap: 14px; }
+.fc-face { font-size: 17px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.fc-back { border-top: 1px dashed var(--border-strong); padding-top: 14px; font-size: 15.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.grades { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 8px; }
+.grades .btn { display: flex; flex-direction: column; align-items: center; gap: 1px; padding: 8px 4px; }
+.grades .btn small { font-weight: 400; font-size: 11px; opacity: .75; }
+.g-again { background: var(--red-bg) !important; color: var(--red-text) !important; border-color: transparent !important; }
+.g-hard { background: var(--amber-bg) !important; color: var(--amber-text) !important; border-color: transparent !important; }
+.g-good { background: var(--green-bg) !important; color: var(--green-text) !important; border-color: transparent !important; }
+.g-easy { background: var(--blue-bg) !important; color: var(--blue-text) !important; border-color: transparent !important; }
+.deck-row { display: grid; grid-template-columns: minmax(0,1fr) auto auto auto; gap: 12px; align-items: center; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; }
+.deck-row:last-child { border-bottom: none; }
+.num-due { color: var(--line); font-weight: 600; }
+.num-new { color: var(--green-text); font-weight: 600; }
+/* topics */
+.topic-sec { display: flex; flex-direction: column; }
+.topic-row { display: grid; grid-template-columns: 14px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 8px 4px; border: none; border-bottom: 1px solid var(--border); background: none; color: inherit; font: inherit; font-size: 13px; text-align: left; cursor: pointer; width: 100%; }
+.topic-row:hover { background: var(--surface-2); }
+.topic-row .dot { width: 12px; height: 12px; border-radius: 3px; }
+.topic-row .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topic-row .st { font-size: 11.5px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mastery-strip { display: flex; gap: 3px; flex-wrap: wrap; }
+.mastery-strip span { width: 14px; height: 14px; border-radius: 3px; }
+.legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--text-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+.mseg { display: flex; gap: 4px; flex-wrap: wrap; }
+.mseg button { font: inherit; font-size: 12px; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--border-strong); background: transparent; color: var(--text-2); cursor: pointer; }
+.mseg button[aria-pressed="true"] { color: var(--text); font-weight: 600; border-width: 2px; }
+.file-list { display: flex; flex-direction: column; gap: 6px; }
+.file-item { display: flex; gap: 8px; align-items: center; font-size: 13px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; min-width: 0; }
+.file-item a { color: var(--line); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+.file-item img { width: 40px; height: 40px; object-fit: cover; border-radius: 4px; }
+/* tutor */
+.chat { display: flex; flex-direction: column; gap: 12px; }
+.msgs { display: flex; flex-direction: column; gap: 10px; }
+.msg { padding: 10px 13px; border-radius: 12px; font-size: 14px; overflow-wrap: anywhere; max-width: 100%; min-width: 0; }
+.msg.user { background: var(--accent); color: var(--accent-ink); align-self: flex-end; max-width: 85%; white-space: pre-wrap; }
+.msg.ai { background: var(--surface); border: 1px solid var(--border); }
+.msg.ai p { margin: 0 0 8px; } .msg.ai p:last-child { margin-bottom: 0; }
+.msg.ai ul, .msg.ai ol { margin: 4px 0 8px; padding-left: 20px; }
+.msg.ai h3, .msg.ai h4 { margin: 10px 0 6px; font-size: 14.5px; }
+.msg.ai pre { background: var(--surface-2); padding: 8px 10px; border-radius: 8px; overflow-x: auto; font-family: var(--mono); font-size: 12.5px; }
+.msg.ai code { font-family: var(--mono); font-size: 12.5px; background: var(--surface-2); padding: 1px 4px; border-radius: 4px; }
+.msg.tool { font-size: 12px; color: var(--text-3); padding: 0 4px; }
+.msg img { max-width: 220px; border-radius: 8px; display: block; margin-bottom: 6px; }
+.composer { display: flex; flex-direction: column; gap: 8px; position: sticky; bottom: env(safe-area-inset-bottom, 0px); background: var(--bg); padding: 8px 0 4px; }
+.composer textarea { min-height: 64px; }
+.attach-chip { font-size: 12px; color: var(--text-2); display: flex; gap: 6px; align-items: center; }
+.suggest { display: flex; gap: 6px; flex-wrap: wrap; }
+.suggest button { font: inherit; font-size: 12.5px; text-align: left; padding: 8px 11px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+.suggest button:hover { border-color: var(--border-strong); }
+/* plan */
+.countdown { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.countdown .big { font-family: var(--display); font-size: 48px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.phases { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 8px; }
+@media (max-width: 560px) { .phases { grid-template-columns: minmax(0,1fr); } }
+.phase { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+.phase.now { border: 2px solid var(--line); }
+.phase .pn { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+.phase .pt { font-weight: 600; }
+.timeline { position: relative; height: 34px; margin: 6px 0 2px; }
+.timeline .track { position: absolute; left: 0; right: 0; top: 14px; height: 6px; border-radius: 3px; background: var(--surface-2); }
+.timeline .fl { position: absolute; top: 8px; width: 3px; height: 18px; background: var(--target); border-radius: 2px; }
+.timeline .today { position: absolute; top: 4px; width: 2px; height: 26px; background: var(--text); }
+.md p { margin: 0 0 8px; } .md ul, .md ol { margin: 4px 0 8px; padding-left: 20px; } .md h3, .md h4 { margin: 10px 0 6px; font-size: 14.5px; }
+@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1><a href="./" style="text-decoration:none;color:inherit" title="MHUB home">MHUB<span class="dot">.</span></a></h1>
+      <p class="sub" id="greeting">Your mistakes, scores, flashcards, topics and tutor in one place.</p>
+    </div>
+    <div class="row"><span class="pill" id="pill-days" hidden></span><span class="pill" id="pill-target">Target 520</span></div>
+  </header>
+
+  <nav class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="dash">Dashboard</button>
+    <button role="tab" data-tab="tutor">Tutor</button>
+    <button role="tab" data-tab="cards">Flashcards<span class="badge" id="due-badge" hidden></span></button>
+    <button role="tab" data-tab="topics">Topics</button>
+    <button role="tab" data-tab="log">Mistakes</button>
+    <button role="tab" data-tab="scores">Scores</button>
+    <button role="tab" data-tab="plan">Plan</button>
+  </nav>
+
+  <p class="status" id="db-status">Loading your saved data…</p>
+
+  <!-- DASHBOARD -->
+  <section id="panel-dash" class="stack" hidden>
+    <div id="welcome"></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="card"><p class="h">Full-length score trend</p><div id="trend"></div></div>
+    <div class="card" id="latest-card" hidden><p class="h">Latest test by section <span class="hint" style="display:inline">· tick = 130, the pace for 520</span></p><div id="latest-sections"></div></div>
+    <div id="recurring"></div>
+    <div class="card"><div class="spread" style="margin-bottom:10px"><p class="h" style="margin:0">Weakest topics</p><button class="btn ghost sm" data-goto="topics">All topics</button></div><div class="bars" id="bars-weak"></div></div>
+    <div class="grid2">
+      <div class="card"><p class="h">How you miss</p><div class="bars" id="bars-miss"></div></div>
+      <div class="card"><p class="h">Named traps</p><div class="bars" id="bars-trap"></div></div>
+    </div>
+  </section>
+
+  <!-- TUTOR -->
+  <section id="panel-tutor" class="stack" hidden>
+    <div class="spread">
+      <div class="chips" id="t-modes"></div>
+      <button class="btn ghost sm" id="t-clear">New chat</button>
+    </div>
+    <p class="hint" id="t-modehint"></p>
+    <div class="chat">
+      <div class="msgs" id="t-msgs"></div>
+      <div class="suggest" id="t-suggest"></div>
+      <div class="composer">
+        <div class="attach-chip" id="t-attach" hidden></div>
+        <textarea id="t-input" placeholder="Ask anything, or paste a question you missed. Attach a screenshot with Image."></textarea>
+        <div class="spread">
+          <span class="row"><button class="btn ghost sm" id="t-img">Image</button><input type="file" id="t-file" accept="image/*" hidden><span class="hint" id="t-note">Knows your mistakes, scores and topics.</span></span>
+          <span class="row"><button class="btn ghost sm" id="t-stop" hidden>Stop</button><button class="btn" id="t-send">Send</button></span>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="t-unavail" hidden><p class="h2" style="margin-bottom:6px">The AI tutor runs inside Claude</p><p class="hint" style="margin-bottom:12px">Everything else in MHUB works right here. To chat with the tutor that knows your mistakes and topics, open MHUB in Claude with a free account.</p><a class="btn" href="https://claude.ai/artifact/XnXFUXoPTjgZAcDm5YoZfx" target="_blank" rel="noopener">Open the AI tutor</a></div>
+  </section>
+
+  <!-- FLASHCARDS -->
+  <section id="panel-cards" class="stack" hidden>
+    <div id="fc-study"></div>
+    <div class="card">
+      <div class="spread" style="margin-bottom:6px"><p class="h" style="margin:0">Decks</p><span class="row"><button class="btn ghost sm" id="fc-import-btn">Import Anki (.txt)</button><input type="file" id="fc-import" accept=".txt,.tsv,.csv,text/plain" hidden></span></div>
+      <div id="fc-decks"></div>
+      <p class="hint" id="fc-import-status" style="margin-top:8px">In Anki: File → Export → "Notes in Plain Text (.txt)" with HTML included. For a .apkg file, send it to Claude in chat and it will import it for you.</p>
+    </div>
+    <details class="card logger" id="fc-add">
+      <summary>Add a card</summary>
+      <form class="form" id="fc-form">
+        <div class="full"><label for="fc-front">Front</label><textarea id="fc-front" required></textarea></div>
+        <div class="full"><label for="fc-back">Back</label><textarea id="fc-back" required></textarea></div>
+        <div><label for="fc-deck">Deck</label><input id="fc-deck" list="fc-deck-list" placeholder="My cards"><datalist id="fc-deck-list"></datalist></div>
+        <div><label for="fc-topic">Topic</label><select id="fc-topic"></select></div>
+        <div class="full"><button class="btn" type="submit">Save card</button></div>
+      </form>
+    </details>
+  </section>
+
+  <!-- TOPICS -->
+  <section id="panel-topics" class="stack" hidden>
+    <div class="card">
+      <div class="spread"><p class="h" style="margin:0">Content coverage</p><div class="legend" id="m-legend"></div></div>
+      <div id="t-overview" style="margin-top:12px"></div>
+    </div>
+    <div id="topic-detail"></div>
+    <div class="chips" id="tp-section"></div>
+    <div class="card"><div class="topic-sec" id="topic-list"></div></div>
+  </section>
+
+  <!-- MISTAKES -->
+  <section id="panel-log" class="stack" hidden>
+    <details class="card logger" id="logger">
+      <summary id="logger-title">Log a mistake yourself</summary>
+      <form class="form" id="m-form">
+        <div><label for="m-section">Section</label>
+          <select id="m-section"><option value="cp">Chem/Phys</option><option value="cars">CARS</option><option value="bb">Bio/Biochem</option><option value="ps">Psych/Soc</option></select></div>
+        <div><label for="m-source">Source</label>
+          <select id="m-source"><option value="aamc">AAMC</option><option value="uworld">UWorld</option><option value="jw">Jack Westin</option><option value="other">Other</option></select></div>
+        <div><label for="m-exam">Exam / set</label><input id="m-exam" placeholder="AAMC FL 2, UWorld block 14…"></div>
+        <div><label for="m-qnum">Question #</label><input id="m-qnum" placeholder="P3 Q14"></div>
+        <div class="full" id="m-subtopic-wrap"><label for="m-subtopic">Topic</label><select id="m-subtopic"></select></div>
+        <div class="full" id="m-passage-wrap" hidden><label for="m-passage">Passage type</label>
+          <select id="m-passage"><option value="humanities">Humanities</option><option value="social-science">Social science</option><option value="natural-science">Natural science</option><option value="philosophy-ethics">Philosophy / ethics</option></select></div>
+        <div><label for="m-miss">Miss type</label>
+          <select id="m-miss"><option value="scope">Scope error</option><option value="trap">Answer trap</option><option value="misread">Misread / missed detail</option><option value="timing">Timing / rushed</option><option value="other">Other</option></select></div>
+        <div><label for="m-conf">Confidence going in</label>
+          <select id="m-conf"><option value="confident-wrong">Confident, but wrong</option><option value="down-to-two">Down to two, guessed</option><option value="fully-guessed">Fully guessed</option><option value="ran-out-of-time">Ran out of time</option></select></div>
+        <div id="m-root-wrap"><label for="m-root">Root cause</label>
+          <select id="m-root"><option value="content-gap">Content gap</option><option value="scope-error">Scope / reasoning error</option><option value="passage-misread">Passage misread</option><option value="careless">Careless / setup error</option></select></div>
+        <div id="m-anki-wrap"><label for="m-anki">Anki card made?</label>
+          <select id="m-anki"><option value="no">No</option><option value="yes">Yes</option></select></div>
+        <div class="full"><label for="m-trap">Trap name (short)</label><input id="m-trap" placeholder="True statement, wrong mechanism"></div>
+        <div class="full"><label for="m-sentence">Key line / evidence</label><textarea id="m-sentence" placeholder="Quote or paraphrase the line that decides it"></textarea></div>
+        <div class="full"><label for="m-lesson">Lesson</label><input id="m-lesson" placeholder="What actually went wrong"></div>
+        <div class="full"><label for="m-heur">Heuristic for next time</label><input id="m-heur" placeholder="Before picking, ask: does this answer explain the mechanism in the passage?"></div>
+        <div class="full row"><button class="btn" type="submit" id="m-submit">Save mistake</button><button class="btn ghost" type="button" id="m-cancel" hidden>Cancel edit</button></div>
+      </form>
+    </details>
+    <div class="stack" style="gap:8px">
+      <div class="chips" id="f-section"></div>
+      <div class="chips" id="f-source"></div>
+      <input id="f-search" type="search" placeholder="Search lessons, topics, traps…" aria-label="Search mistakes">
+    </div>
+    <div class="spread">
+      <span class="count-line" id="count-line"></span>
+      <span class="row"><button class="btn ghost sm" id="retest-btn">Retest these</button><button class="btn ghost sm" id="export-btn" hidden>Export JSON</button></span>
+    </div>
+    <div id="retest" hidden></div>
+    <div class="entries" id="entries"></div>
+  </section>
+
+  <!-- SCORES -->
+  <section id="panel-scores" class="stack" hidden>
+    <details class="card logger" id="s-logger" open>
+      <summary>Add a practice test</summary>
+      <form class="form" id="s-form">
+        <div><label for="s-label">Test</label><input id="s-label" placeholder="AAMC FL 2" required></div>
+        <div><label for="s-date">Date</label><input id="s-date" type="date" required></div>
+        <div><label for="s-source">Source</label><select id="s-source"><option value="aamc">AAMC</option><option value="uworld">UWorld</option><option value="other">Other</option></select></div>
+        <div></div>
+        <div><label for="s-cp">Chem/Phys</label><input id="s-cp" type="number" min="118" max="132" required></div>
+        <div><label for="s-cars">CARS</label><input id="s-cars" type="number" min="118" max="132" required></div>
+        <div><label for="s-bb">Bio/Biochem</label><input id="s-bb" type="number" min="118" max="132" required></div>
+        <div><label for="s-ps">Psych/Soc</label><input id="s-ps" type="number" min="118" max="132" required></div>
+        <div class="full"><button class="btn" type="submit" id="s-submit">Save test</button></div>
+      </form>
+    </details>
+    <div class="card"><p class="h">All practice tests</p><div class="table-wrap" id="scores-table"></div></div>
+  </section>
+
+  <!-- PLAN -->
+  <section id="panel-plan" class="stack" hidden>
+    <div class="card" id="plan-top"></div>
+    <div class="card">
+      <p class="h">Your settings</p>
+      <form class="form" id="set-form">
+        <div><label for="set-date">Test date</label><input id="set-date" type="date"></div>
+        <div><label for="set-target">Target score</label><input id="set-target" type="number" min="472" max="528" placeholder="520"></div>
+        <div><label for="set-hours">Study hours per week</label><input id="set-hours" type="number" min="1" max="80" placeholder="20"></div>
+        <div><label for="set-new">New flashcards per day</label><input id="set-new" type="number" min="0" max="200" placeholder="20"></div>
+        <div class="full row"><button class="btn" type="submit">Save settings</button><button class="btn ghost" type="button" id="bk-export">Download backup</button><button class="btn ghost" type="button" id="bk-import-btn">Restore from backup</button><input type="file" id="bk-import" accept=".json,application/json" hidden></div>
+        <p class="hint full" id="bk-status">A backup holds your mistakes, scores, topics, flashcards and settings. Use it to move MHUB to another device.</p>
+      </form>
+    </div>
+    <div class="card" id="plan-week"></div>
+    <div class="card">
+      <div class="spread" style="margin-bottom:10px"><p class="h" style="margin:0">AI study plan</p><button class="btn sm" id="plan-ai">Build my plan</button></div>
+      <div class="md" id="plan-text"><p class="hint">The tutor reads your test date, scores, misses and topic coverage and writes a week-by-week plan. Rebuild it any time.</p></div>
+    </div>
+  </section>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function () {
+  // ---------- constants ----------
+  const SECTIONS = {
+    cp: { label: 'Chem/Phys', long: 'Chemical and Physical Foundations', bg: 'var(--blue-bg)', fg: 'var(--blue-text)' },
+    cars: { label: 'CARS', long: 'Critical Analysis and Reasoning Skills', bg: 'var(--purple-bg)', fg: 'var(--purple-text)' },
+    bb: { label: 'Bio/Biochem', long: 'Biological and Biochemical Foundations', bg: 'var(--amber-bg)', fg: 'var(--amber-text)' },
+    ps: { label: 'Psych/Soc', long: 'Psychological, Social and Biological Foundations', bg: 'var(--coral-bg)', fg: 'var(--coral-text)' }
+  };
+  const SOURCES = { aamc: 'AAMC', uworld: 'UWorld', jw: 'Jack Westin', other: 'Other' };
+  const MISS = { scope: 'Scope error', trap: 'Answer trap', misread: 'Misread / missed detail', timing: 'Timing / rushed', other: 'Other' };
+  const ROOT = { 'content-gap': 'Content gap', 'scope-error': 'Scope / reasoning error', 'passage-misread': 'Passage misread', 'careless': 'Careless / setup error' };
+  const CONF = { 'confident-wrong': 'Confident, but wrong', 'down-to-two': 'Down to two, guessed', 'fully-guessed': 'Fully guessed', 'ran-out-of-time': 'Ran out of time' };
+  const PASSAGE = { humanities: 'Humanities', 'social-science': 'Social science', 'natural-science': 'Natural science', 'philosophy-ethics': 'Philosophy / ethics' };
+  const MLEVELS = ['Not started', 'Learning', 'Shaky', 'Solid', 'Mastered'];
+  const TOPICS = {
+    cp: ['Gen Chem 1 - Atomic Structure','Gen Chem 2 - The Periodic Table','Gen Chem 3 - Bonding and Chemical Interactions','Gen Chem 4 - Compounds and Stoichiometry','Gen Chem 5 - Chemical Kinetics','Gen Chem 6 - Equilibrium','Gen Chem 7 - Thermochemistry','Gen Chem 8 - The Gas Phase','Gen Chem 9 - Solutions','Gen Chem 10 - Acids and Bases','Gen Chem 11 - Oxidation-Reduction Reactions','Gen Chem 12 - Electrochemistry','Orgo 1 - Nomenclature','Orgo 2 - Isomers','Orgo 3 - Bonding','Orgo 4 - Analyzing Organic Reactions','Orgo 5 - Alcohols','Orgo 6 - Aldehydes and Ketones I','Orgo 7 - Aldehydes and Ketones II','Orgo 8 - Carboxylic Acids','Orgo 9 - Carboxylic Acid Derivatives','Orgo 10 - Nitrogen and Phosphorus-Containing Compounds','Orgo 11 - Spectroscopy','Orgo 12 - Separations and Purifications','Physics 1 - Kinematics and Dynamics','Physics 2 - Work and Energy','Physics 3 - Thermodynamics','Physics 4 - Fluids','Physics 5 - Electrostatics and Magnetism','Physics 6 - Circuits','Physics 7 - Waves and Sound','Physics 8 - Light and Optics','Physics 9 - Atomic and Nuclear Phenomena','Physics 10 - Mathematics','Physics 11 - Reasoning About Research Design','Physics 12 - Data-Based and Statistical Reasoning'],
+    cars: ['CARS - Humanities','CARS - Social science','CARS - Natural science','CARS - Philosophy / ethics'],
+    bb: ['Biology 1 - The Cell','Biology 2 - Reproduction','Biology 3 - Embryogenesis and Development','Biology 4 - The Nervous System','Biology 5 - The Endocrine System','Biology 6 - The Respiratory System','Biology 7 - The Cardiovascular System','Biology 8 - The Immune System','Biology 9 - The Digestive System','Biology 10 - Homeostasis','Biology 11 - Musculoskeletal System','Biology 12 - Genetics and Evolution','Biochem 1 - Amino Acids, Peptides and Proteins','Biochem 2 - Enzymes','Biochem 3 - Nonenzymatic Protein Function and Protein Analysis','Biochem 4 - Carbohydrate Structure and Function','Biochem 5 - Lipid Structure and Function','Biochem 6 - DNA and Biotechnology','Biochem 7 - RNA and the Genetic Code','Biochem 8 - Biological Membranes','Biochem 9 - Carb Metabolism I: Glycolysis, Glycogen, Gluconeogenesis, PPP','Biochem 10 - Carb Metabolism II: Aerobic Respiration','Biochem 11 - Lipid and Amino Acid Metabolism','Biochem 12 - Bioenergetics and Regulation of Metabolism'],
+    ps: ['Behavioral Sci 1 - Biology and Behavior','Behavioral Sci 2 - Sensation and Perception','Behavioral Sci 3 - Learning and Memory','Behavioral Sci 4 - Cognition, Consciousness and Language','Behavioral Sci 5 - Motivation, Emotion and Stress','Behavioral Sci 6 - Identity and Personality','Behavioral Sci 7 - Psychological Disorders','Behavioral Sci 8 - Social Processes, Attitudes and Behavior','Behavioral Sci 9 - Social Interaction','Behavioral Sci 10 - Social Thinking','Behavioral Sci 11 - Social Structure and Demographics','Behavioral Sci 12 - Social Stratification']
+  };
+  const PASSAGE_TOPIC = { humanities: 'CARS - Humanities', 'social-science': 'CARS - Social science', 'natural-science': 'CARS - Natural science', 'philosophy-ethics': 'CARS - Philosophy / ethics' };
+  const ALL_TOPICS = []; Object.keys(TOPICS).forEach(s => TOPICS[s].forEach(n => ALL_TOPICS.push({ name: n, section: s, id: slug(n) })));
+  const TOPIC_BY_ID = Object.fromEntries(ALL_TOPICS.map(t => [t.id, t]));
+  const TOPIC_BY_NAME = Object.fromEntries(ALL_TOPICS.map(t => [t.name.toLowerCase(), t]));
+  const STOP = new Set('the a an of to in on for and or is are was were be been being this that these those it its as at by with from not but than then so if when where which what who whom how why into onto over under again more most less least no nor only own same such can will just should now you your my me we our they their he she his her them also both each other some any all because while before after about above below between through during without within per vs instead rather actually always never something anything question answer choice choices option options got picked chose wrong right'.split(' '));
+  const SET_CAP = 150;
+
+  // ---------- helpers ----------
+  function slug(s) { return String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 80); }
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let toastTimer;
+  function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, 2600); }
+  function ls(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } }
+  function sectionTag(s) { const m = SECTIONS[s] || { label: s || '—', bg: 'var(--surface-2)', fg: 'var(--text-2)' }; return `<span class="tag" style="background:${m.bg};color:${m.fg}">${esc(m.label)}</span>`; }
+  function fmtDate(iso) { if (!iso) return ''; const d = new Date(String(iso).length === 10 ? iso + 'T12:00:00' : iso); if (isNaN(d)) return ''; return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); }
+  function countBy(arr, fn) { const m = new Map(); arr.forEach(x => { const k = fn(x); if (k) m.set(k, (m.get(k) || 0) + 1); }); return [...m.entries()].sort((a, b) => b[1] - a[1]); }
+  function tok(s) { return new Set(String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !STOP.has(w))); }
+  function jac(a, b) { if (!a.size || !b.size) return 0; let i = 0; a.forEach(w => { if (b.has(w)) i++; }); return i / (a.size + b.size - i); }
+  function total(s) { return (+s.cp || 0) + (+s.cars || 0) + (+s.bb || 0) + (+s.ps || 0); }
+  function uid36() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+  function todayStr() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function daysUntil(dateStr) { if (!dateStr) return null; const t = new Date(dateStr + 'T08:00:00').getTime(); return Math.ceil((t - Date.now()) / 864e5); }
+  function topicOfMistake(m) { if (m.section === 'cars') return m.passageType ? PASSAGE_TOPIC[m.passageType] : ''; return m.subtopic || ''; }
+  function mdToHtml(src) {
+    const lines = String(src || '').split('\n'); let out = '', list = null, code = null;
+    const inline = s => esc(s).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>').replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>');
+    const closeList = () => { if (list) { out += `</${list}>`; list = null; } };
+    for (const raw of lines) {
+      if (code !== null) { if (/^```/.test(raw)) { out += `<pre>${esc(code)}</pre>`; code = null; } else code += raw + '\n'; continue; }
+      if (/^```/.test(raw)) { closeList(); code = ''; continue; }
+      const h = raw.match(/^(#{1,4})\s+(.*)/); if (h) { closeList(); out += `<h${h[1].length < 3 ? 3 : 4}>${inline(h[2])}</h${h[1].length < 3 ? 3 : 4}>`; continue; }
+      const ul = raw.match(/^\s*[-*•]\s+(.*)/), ol = raw.match(/^\s*\d+[.)]\s+(.*)/);
+      if (ul || ol) { const t = ul ? 'ul' : 'ol'; if (list !== t) { closeList(); out += `<${t}>`; list = t; } out += `<li>${inline((ul || ol)[1])}</li>`; continue; }
+      closeList();
+      if (raw.trim()) out += `<p>${inline(raw)}</p>`;
+    }
+    closeList(); if (code !== null) out += `<pre>${esc(code)}</pre>`;
+    return out;
+  }
+
+  // ---------- state ----------
+  const state = {
+    tab: 'dash', uid: null, ready: false, canWrite: true, name: '',
+    mistakes: [], scores: [], cardsets: [], topics: {}, settings: {},
+    fSection: 'all', fSource: 'all', search: '', editing: null, confirmDel: null,
+    retestOn: false, rCurrent: null, rRevealed: false,
+    tpSection: 'all', openTopic: null,
+    study: null, // {deck, queue:[{setId,cid}], cur, showBack}
+    tMode: 'tutor', tMsgs: [], tBusy: false, tImage: null, tCtl: null
+  };
+  let db = null, assets = null, sample = null, downloads = null;
+  const base = () => `data/users/${state.uid}/hub`;
+  const col = (n) => db.collection(base() + '/' + n);
+  const settingsRef = () => db.doc(`data/users/${state.uid}/settings`);
+  const target = () => +state.settings.target || 520;
+
+  // ---------- derived ----------
+  function allCards() { const out = []; state.cardsets.forEach(s => { const c = s.cards || {}; Object.keys(c).forEach(cid => out.push({ ...c[cid], cid, setId: s._id, deck: s.deck || 'My cards' })); }); return out; }
+  function newLimitLeft() { const lim = state.settings.newPerDay == null ? 20 : +state.settings.newPerDay; const log = state.settings.newLog || {}; return Math.max(0, lim - (log.date === todayStr() ? (+log.count || 0) : 0)); }
+  function isNew(c) { return !c.reps && !c.lapses && !c.due; }
+  function dueNow(c) { return !isNew(c) && (+c.due || 0) <= Date.now(); }
+  function deckStats() {
+    const m = new Map(); allCards().forEach(c => { const d = m.get(c.deck) || { deck: c.deck, total: 0, due: 0, fresh: 0 }; d.total++; if (dueNow(c)) d.due++; if (isNew(c)) d.fresh++; m.set(c.deck, d); });
+    return [...m.values()].sort((a, b) => a.deck.localeCompare(b.deck));
+  }
+  function topicStats() {
+    const s = {}; ALL_TOPICS.forEach(t => { s[t.id] = { misses: 0, cards: 0, lapses: 0, mastery: +((state.topics[t.id] || {}).mastery || 0) }; });
+    state.mistakes.forEach(m => { const t = TOPIC_BY_NAME[(topicOfMistake(m) || '').toLowerCase()]; if (t) s[t.id].misses++; });
+    allCards().forEach(c => { if (c.topic && s[c.topic]) { s[c.topic].cards++; s[c.topic].lapses += +c.lapses || 0; } });
+    return s;
+  }
+  function weakTopics(n) {
+    const st = topicStats();
+    return ALL_TOPICS.map(t => ({ ...t, ...st[t.id], score: st[t.id].misses * 2 + st[t.id].lapses * 0.5 + (st[t.id].mastery <= 1 && st[t.id].misses ? 2 : 0) - st[t.id].mastery * 0.8 }))
+      .filter(t => t.misses || t.lapses || (state.topics[t.id] && state.topics[t.id].mastery != null && t.mastery <= 2))
+      .sort((a, b) => b.score - a.score).slice(0, n);
+  }
+
+  // ---------- tabs ----------
+  const TABS = ['dash', 'tutor', 'cards', 'topics', 'log', 'scores', 'plan'];
+  function setTab(t) {
+    if (!TABS.includes(t)) t = 'dash';
+    state.tab = t; ls('mcat-hub-tab', t);
+    try { if (location.hash !== '#' + t) history.replaceState(null, '', '#' + t); } catch (e) {}
+    document.querySelectorAll('#tabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
+    TABS.forEach(p => { $('panel-' + p).hidden = p !== t; });
+    render();
+  }
+  document.querySelectorAll('#tabs button').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
+  document.addEventListener('click', e => { const g = e.target.closest('[data-goto]'); if (g) { if (g.dataset.topic) state.openTopic = g.dataset.topic; setTab(g.dataset.goto); } });
+
+  function render() {
+    renderHeader();
+    if (!state.ready && state.tab !== 'tutor') { /* panels show their loading states */ }
+    ({ dash: renderDash, tutor: renderTutor, cards: renderCards, topics: renderTopics, log: renderLog, scores: renderScores, plan: renderPlan })[state.tab]();
+  }
+  function renderHeader() {
+    const d = daysUntil(state.settings.testDate);
+    $('pill-days').hidden = d == null; if (d != null) $('pill-days').textContent = d > 0 ? `${d} days to test` : d === 0 ? 'Test day' : 'Test done';
+    $('pill-target').textContent = 'Target ' + target();
+    $('greeting').textContent = state.name ? `${state.name.split(' ')[0]}'s mistakes, scores, flashcards, topics and tutor in one place.` : 'Your mistakes, scores, flashcards, topics and tutor in one place.';
+    const due = state.ready ? allCards().filter(dueNow).length + Math.min(newLimitLeft(), allCards().filter(isNew).length) : 0;
+    $('due-badge').hidden = !due; $('due-badge').textContent = due;
+  }
+
+  function barList(el, rows, onClick, emptyMsg) {
+    if (!rows.length) { el.innerHTML = `<p class="empty">${esc(emptyMsg || 'Nothing logged yet.')}</p>`; return; }
+    const max = Math.max(...rows.map(r => r[1]));
+    el.innerHTML = rows.map(([k, n, lbl]) => `<button class="bar-row" data-k="${esc(k)}"><span class="lbl">${esc(lbl || k)}</span><span class="bar-bg"><span class="bar-fill" style="width:${(n / max * 100).toFixed(1)}%"></span></span><span class="n">${Math.round(n * 10) / 10}</span></button>`).join('');
+    el.querySelectorAll('.bar-row').forEach(b => b.addEventListener('click', () => onClick && onClick(b.dataset.k)));
+  }
+  function jumpToSearch(q) { state.search = q; $('f-search').value = q; state.fSection = 'all'; state.fSource = 'all'; setTab('log'); }
+
+  // ---------- dashboard ----------
+  function renderDash() {
+    const M = state.mistakes, S = [...state.scores].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    renderOnboard();
+    const weekAgo = Date.now() - 7 * 864e5;
+    const thisWeek = M.filter(m => new Date(m.date).getTime() >= weekAgo).length;
+    const latest = S[S.length - 1];
+    const cards = allCards(), due = cards.filter(dueNow).length, fresh = Math.min(newLimitLeft(), cards.filter(isNew).length);
+    const d = daysUntil(state.settings.testDate);
+    const tiles = [
+      ['Days to test', d == null ? '—' : Math.max(0, d), state.settings.testDate ? fmtDate(state.settings.testDate) : 'set in Plan', 'plan'],
+      ['Latest FL', latest ? total(latest) : '—', latest ? `${total(latest) >= target() ? '+' : ''}${total(latest) - target()} vs ${target()}` : 'no tests yet', 'scores'],
+      ['Cards today', state.ready ? due + fresh : '—', cards.length ? `${due} due · ${fresh} new` : 'import your Anki deck', 'cards'],
+      ['Misses logged', M.length, `${thisWeek} in the last 7 days`, 'log']
+    ];
+    $('tiles').innerHTML = tiles.map(([k, v, s, go]) => `<button class="tile" data-goto="${go}"><div class="k">${k}</div><div class="v">${v}</div><div class="d">${esc(s)}</div></button>`).join('');
+    renderTrend(S);
+    renderLatest(latest);
+    renderRecurring(M);
+    const weak = weakTopics(8);
+    barList($('bars-weak'), weak.map(t => [t.id, t.misses, t.name]), k => { state.openTopic = k; setTab('topics'); }, 'Weak topics appear here as you log misses and rate topics.');
+    barList($('bars-miss'), countBy(M, m => m.missType).map(([k, n]) => [k, n, MISS[k] || k]), k => jumpToSearch(MISS[k] || k));
+    barList($('bars-trap'), countBy(M, m => (m.trapName || '').trim()).slice(0, 8), k => jumpToSearch(k), 'New misses get a named trap (like "true statement, wrong mechanism"). They stack up here.');
+  }
+  function renderTrend(S) {
+    const el = $('trend');
+    if (!S.length) { el.innerHTML = '<p class="empty">No practice tests yet. Add one on the Scores tab, or send Claude your section scores after a full-length.</p>'; return; }
+    const W = 640, H = 230, L = 40, R = 16, T = 14, B = 34, TG = target();
+    const vals = S.map(total);
+    let lo = Math.max(472, Math.floor((Math.min(...vals, TG) - 4) / 4) * 4), hi = Math.min(528, Math.ceil((Math.max(...vals, TG) + 3) / 4) * 4);
+    const x = i => S.length === 1 ? (L + (W - L - R) / 2) : L + i * (W - L - R) / (S.length - 1);
+    const y = v => T + (hi - v) / (hi - lo) * (H - T - B);
+    const step = (hi - lo) > 24 ? 8 : 4;
+    let g = '';
+    for (let v = lo; v <= hi; v += step) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" stroke="var(--border)" stroke-width="1"/><text x="${L - 8}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--text-3)">${v}</text>`;
+    g += `<line x1="${L}" x2="${W - R}" y1="${y(TG)}" y2="${y(TG)}" stroke="var(--target)" stroke-width="1.5" stroke-dasharray="5 4"/><text x="${W - R}" y="${y(TG) - 6}" text-anchor="end" font-size="11" font-weight="600" fill="var(--target)">Target ${TG}</text>`;
+    const pts = S.map((s, i) => [x(i), y(vals[i])]);
+    const path = pts.map((p, i) => (i ? 'L' : 'M') + p[0].toFixed(1) + ' ' + p[1].toFixed(1)).join(' ');
+    const area = S.length > 1 ? `<path d="${path} L${pts[pts.length - 1][0]} ${H - B} L${pts[0][0]} ${H - B} Z" fill="var(--line)" opacity="0.08"/>` : '';
+    const every = Math.ceil(S.length / 6);
+    const xl = S.map((s, i) => (i % every === 0 || i === S.length - 1) ? `<text x="${x(i)}" y="${H - B + 18}" text-anchor="middle" font-size="11" fill="var(--text-3)">${esc((s.label || '').slice(0, 14))}</text>` : '').join('');
+    const dots = pts.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="${i === pts.length - 1 ? 5 : 4}" fill="${i === pts.length - 1 ? 'var(--line)' : 'var(--surface)'}" stroke="var(--line)" stroke-width="2"/>`).join('');
+    const last = pts[pts.length - 1];
+    const hits = pts.map((p, i) => `<rect class="hit" data-i="${i}" x="${p[0] - 18}" y="${T}" width="36" height="${H - T - B}" fill="transparent"/>`).join('');
+    el.innerHTML = `<div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Practice test totals over time">${g}${area}${S.length > 1 ? `<path d="${path}" fill="none" stroke="var(--line)" stroke-width="2" stroke-linejoin="round"/>` : ''}${dots}<text x="${last[0]}" y="${last[1] - 11}" text-anchor="${S.length === 1 ? 'middle' : 'end'}" font-size="12" font-weight="650" fill="var(--text)">${vals[vals.length - 1]}</text>${xl}${hits}</svg><div class="tip" hidden></div></div>`;
+    const wrap = el.querySelector('.chart-wrap'), tip = wrap.querySelector('.tip'), svg = wrap.querySelector('svg');
+    svg.querySelectorAll('.hit').forEach(r => {
+      const show = () => {
+        const i = +r.dataset.i, s = S[i], rect = svg.getBoundingClientRect(), k = rect.width / W;
+        tip.innerHTML = `<b>${esc(s.label)}</b> · ${fmtDate(s.date)}<br>${total(s)} total · CP ${s.cp} · CARS ${s.cars} · BB ${s.bb} · PS ${s.ps}`;
+        tip.hidden = false;
+        tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth, pts[i][0] * k - tip.offsetWidth / 2)) + 'px';
+        tip.style.top = Math.max(0, pts[i][1] * k - tip.offsetHeight - 14) + 'px';
+      };
+      r.addEventListener('mouseenter', show); r.addEventListener('click', show); r.addEventListener('mouseleave', () => { tip.hidden = true; });
+    });
+  }
+  function renderLatest(s) {
+    $('latest-card').hidden = !s; if (!s) return;
+    const pace = Math.round(target() / 4), pct = v => ((v - 118) / 14 * 100).toFixed(1);
+    $('latest-card').querySelector('.hint').textContent = `· tick = ${pace}, the pace for ${target()}`;
+    $('latest-sections').innerHTML = `<div class="sec-bars">${['cp', 'cars', 'bb', 'ps'].map(k => { const v = +s[k], gap = v - pace; return `<div class="sec-bar"><div class="nm">${SECTIONS[k].label}</div><div class="sc">${v} <span class="hint" style="display:inline">${gap >= 0 ? '+' + gap : gap}</span></div><div class="gauge"><div class="f" style="width:${pct(v)}%"></div><div class="t" style="left:calc(${pct(pace)}% - 1px)"></div></div></div>`; }).join('')}</div><p class="hint" style="margin-top:8px">${esc(s.label)} · ${fmtDate(s.date)}</p>`;
+  }
+  function renderRecurring(M) {
+    const toks = M.map(m => tok((m.lesson || '') + ' ' + (m.trapName || '')));
+    const groups = [], used = new Set();
+    for (let i = 0; i < M.length; i++) {
+      if (used.has(i)) continue; const g = [i];
+      for (let j = i + 1; j < M.length; j++) if (!used.has(j) && M[i].section === M[j].section && jac(toks[i], toks[j]) >= 0.22) g.push(j);
+      if (g.length >= 3) { g.forEach(k => used.add(k)); groups.push(g); }
+    }
+    groups.sort((a, b) => b.length - a.length);
+    $('recurring').innerHTML = groups.length ? `<div class="recurring"><b>Repeat patterns</b> · lessons that keep coming back<ul>${groups.slice(0, 4).map(g => { const m = M[g[0]]; return `<li>${sectionTag(m.section)} <b>${g.length}×</b> ${esc((m.lesson || '').slice(0, 150))}${(m.lesson || '').length > 150 ? '…' : ''}</li>`; }).join('')}</ul></div>` : '';
+  }
+
+  // ---------- onboarding (AI personalization) ----------
+  const RESOURCES = ['AAMC', 'UWorld', 'Kaplan books', 'Princeton Review', 'Blueprint', 'Jack Westin', 'Khan Academy', 'AnKing / Anki', 'Tutor or course'];
+  const LEARN = ['Worked examples', 'Short bullets', 'Analogies', 'Quiz me first', 'Diagrams', 'Step-by-step reasoning'];
+  const TONES = ['Casual and direct', 'Encouraging', 'Strict coach'];
+  function needOnboard() { return state.ready && state.canWrite && (!state.settings.onboarded || state.showOnboard); }
+  function renderOnboard() {
+    const w = $('welcome');
+    if (!needOnboard()) { w.innerHTML = ''; delete w.dataset.ob; return; }
+    if (w.dataset.ob === '1') return; // keep typed answers across live updates
+    w.dataset.ob = '1';
+    const s = state.settings, p = s.profile || {};
+    const ob = state.ob = { conf: { ...(p.conf || {}) }, resources: new Set(p.resources || []), learn: new Set(p.learn || []), tone: p.tone || 'Casual and direct' };
+    const S = [...state.scores].sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+    const multi = (id, opts, set) => `<div class="chips" id="${id}">${opts.map(o => `<button type="button" class="chip" aria-pressed="${set.has(o)}" data-v="${esc(o)}">${esc(o)}</button>`).join('')}</div>`;
+    w.innerHTML = `<form class="onboard" id="ob-form">
+      <div><div class="eyebrow">${s.onboarded ? 'Update your profile' : 'Welcome to MHUB'}</div><div class="title">Tell MHUB about your prep. It builds your account around you.</div><p class="hint">About two minutes. The AI uses this to rate your topics, set your tutor's style, write your plan and make starter flashcards.${state.mistakes.length ? ` It also reads your ${state.mistakes.length} logged misses.` : ''}</p></div>
+      <div class="ob-grid4"><div><label for="ob-date">Test date</label><input type="date" id="ob-date" value="${esc(s.testDate || '')}" required></div><div><label for="ob-target">Target score</label><input type="number" id="ob-target" min="472" max="528" value="${esc(s.target || 515)}"></div><div><label for="ob-hours">Hours per week</label><input type="number" id="ob-hours" min="1" max="80" value="${esc(s.hours || 20)}"></div><div><label for="ob-new">New cards / day</label><input type="number" id="ob-new" min="0" max="200" value="${esc(s.newPerDay == null ? 20 : s.newPerDay)}"></div></div>
+      <div class="ob-q"><span class="lbl">Latest practice test <span class="hint" style="display:inline;font-weight:400">· optional</span></span><div class="ob-grid4"><div><label for="ob-cp">Chem/Phys</label><input type="number" id="ob-cp" min="118" max="132" value="${S ? S.cp : ''}"></div><div><label for="ob-cars">CARS</label><input type="number" id="ob-cars" min="118" max="132" value="${S ? S.cars : ''}"></div><div><label for="ob-bb">Bio/Biochem</label><input type="number" id="ob-bb" min="118" max="132" value="${S ? S.bb : ''}"></div><div><label for="ob-ps">Psych/Soc</label><input type="number" id="ob-ps" min="118" max="132" value="${S ? S.ps : ''}"></div></div>${S ? `<p class="hint">Filled from ${esc(S.label)}.</p>` : `<div style="max-width:16rem"><label for="ob-fl">Which test?</label><input id="ob-fl" placeholder="AAMC FL 1"></div>`}</div>
+      <div class="ob-q"><span class="lbl">How strong is each section right now?</span>${Object.keys(SECTIONS).map(k => `<div class="conf-row"><span>${SECTIONS[k].label}</span><div class="chips" data-conf="${k}">${['Weak', 'Shaky', 'OK', 'Strong'].map((l, i) => `<button type="button" class="chip" aria-pressed="${ob.conf[k] === i}" data-v="${i}">${l}</button>`).join('')}</div></div>`).join('')}</div>
+      <div class="ob-q"><label class="lbl" for="ob-weak" style="color:var(--text);margin:0">Topics you know are weak</label><textarea id="ob-weak" placeholder="amino acids, enzyme kinetics, circuits, CARS timing…">${esc(p.weak || '')}</textarea></div>
+      <div class="ob-q"><span class="lbl">What are you using?</span>${multi('ob-res', RESOURCES, ob.resources)}</div>
+      <div class="ob-q"><span class="lbl">How do you learn best?</span>${multi('ob-learn', LEARN, ob.learn)}</div>
+      <div class="ob-q"><span class="lbl">Tutor tone</span><div class="chips" id="ob-tone">${TONES.map(t => `<button type="button" class="chip" aria-pressed="${ob.tone === t}" data-v="${esc(t)}">${t}</button>`).join('')}</div></div>
+      <div class="ob-q"><label class="lbl" for="ob-notes" style="color:var(--text);margin:0">Anything else? <span class="hint" style="display:inline;font-weight:400">· school schedule, retake, test anxiety, goals</span></label><textarea id="ob-notes">${esc(p.notes || '')}</textarea></div>
+      <div class="ob-progress" id="ob-progress" hidden></div>
+      <div class="row"><button class="btn" type="submit" id="ob-go">${s.onboarded ? 'Rebuild my MHUB' : 'Build my MHUB'}</button>${s.onboarded ? '<button class="btn ghost" type="button" id="ob-cancel">Cancel</button>' : '<button class="btn ghost" type="button" id="ob-skip">Skip for now</button>'}</div>
+    </form>`;
+    const toggleMulti = (id, set) => $(id).querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => { const v = b.dataset.v; set.has(v) ? set.delete(v) : set.add(v); b.setAttribute('aria-pressed', String(set.has(v))); }));
+    toggleMulti('ob-res', ob.resources); toggleMulti('ob-learn', ob.learn);
+    $('ob-tone').querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => { ob.tone = b.dataset.v; $('ob-tone').querySelectorAll('.chip').forEach(x => x.setAttribute('aria-pressed', String(x === b))); }));
+    w.querySelectorAll('[data-conf]').forEach(row => row.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => { ob.conf[row.dataset.conf] = +b.dataset.v; row.querySelectorAll('.chip').forEach(x => x.setAttribute('aria-pressed', String(x === b))); })));
+    const close = () => { state.showOnboard = false; delete w.dataset.ob; renderDash(); };
+    const c = $('ob-cancel'); if (c) c.addEventListener('click', close);
+    const sk = $('ob-skip'); if (sk) sk.addEventListener('click', async () => { await saveSettings({ onboarded: true, testDate: $('ob-date').value || s.testDate || '' }, true); close(); });
+    $('ob-form').addEventListener('submit', e => { e.preventDefault(); buildProfile(); });
+  }
+  async function buildProfile() {
+    const ob = state.ob, prog = $('ob-progress'), go = $('ob-go');
+    const step = (t, ok) => { prog.hidden = false; prog.insertAdjacentHTML('beforeend', `<span class="${ok ? 'ok' : ''}">${ok ? '✓ ' : '… '}${esc(t)}</span>`); };
+    go.disabled = true; go.textContent = 'Building…';
+    const profile = { conf: ob.conf, resources: [...ob.resources], learn: [...ob.learn], tone: ob.tone, weak: $('ob-weak').value.trim(), notes: $('ob-notes').value.trim() };
+    const base = { testDate: $('ob-date').value, target: +$('ob-target').value || 515, hours: +$('ob-hours').value || 20, newPerDay: $('ob-new').value === '' ? 20 : +$('ob-new').value, profile };
+    try {
+      await saveSettings(base, true); step('Saved your answers', true);
+      const sc = ['cp', 'cars', 'bb', 'ps'].map(k => +($('ob-' + k).value || 0));
+      if ($('ob-fl') && sc.every(v => v >= 118 && v <= 132)) { await col('scores').doc('s' + uid36()).set({ label: $('ob-fl').value.trim() || 'Practice test', date: todayStr(), source: /uworld/i.test($('ob-fl').value) ? 'uworld' : 'aamc', cp: sc[0], cars: sc[1], bb: sc[2], ps: sc[3] }); step('Added your practice test', true); }
+      if (!sample) { await saveSettings({ onboarded: true, tutorStyle: `${profile.tone}. Prefers: ${profile.learn.join(', ') || 'clear explanations'}.` }, true); step('Saved. Open MHUB in Claude to have the AI rate your topics and write your plan.', true); return finishOnboard(); }
+      step('AI is reading your profile and misses');
+      const confTxt = Object.keys(SECTIONS).map(k => `${SECTIONS[k].label}: ${ob.conf[k] == null ? 'not given' : ['Weak', 'Shaky', 'OK', 'Strong'][ob.conf[k]]}`).join(', ');
+      const prompt = `You are setting up a personalized MCAT study account. Today is ${todayStr()}.\nStudent answers:\n- Test date: ${base.testDate || 'not set'}; target ${base.target}; ${base.hours} h/week\n- Section self-rating: ${confTxt}\n- Weak topics they named: ${profile.weak || 'none'}\n- Resources: ${profile.resources.join(', ') || 'not given'}\n- Learns best with: ${profile.learn.join(', ') || 'not given'}; tutor tone: ${profile.tone}\n- Other notes: ${profile.notes || 'none'}\n\n${contextBlock()}\n\nTOPIC LIST (use these exact names):\n${ALL_TOPICS.map(t => t.name).join('\n')}\n\nReturn ONLY a JSON object:\n{"summary": "2-3 sentences: who this student is, biggest score levers, recurring error pattern if visible",\n "tutorStyle": "1-3 sentences of standing instructions for their AI tutor (tone, format, what to emphasize, the trap patterns to watch for)",\n "topics": [{"name": "<exact topic name>", "mastery": 0-4}],  // 10-30 topics you can reasonably estimate from their answers, misses and scores; 0 Not started, 1 Learning, 2 Shaky, 3 Solid, 4 Mastered\n "focus": ["3-5 short priorities for the next 2 weeks"],\n "plan": "markdown week-by-week plan to test day (max 500 words, ### Week of <date> headings, fit their hours and resources)",\n "cards": [{"front": "...", "back": "...", "topic": "<exact topic name>"}]  // 8 high-yield original flashcards aimed at their weakest areas\n}`;
+      const out = await sample.json(prompt, { cache: false, modelTier: 'complex' });
+      if (!out || typeof out !== 'object') throw new Error('bad');
+      step('Built your profile', true);
+      const topics = (Array.isArray(out.topics) ? out.topics : []).map(t => ({ t: TOPIC_BY_NAME[String(t.name || '').toLowerCase()], m: Math.max(0, Math.min(4, Math.round(+t.mastery || 0))) })).filter(x => x.t).slice(0, 36);
+      for (const { t, m } of topics) { const cur = state.topics[t.id]; state.topics[t.id] = { ...(cur || {}), mastery: m }; if (cur) await col('topics').doc(t.id).update({ mastery: m }); else await col('topics').doc(t.id).set({ mastery: m }); }
+      if (topics.length) step(`Rated ${topics.length} topics`, true);
+      const cards = (Array.isArray(out.cards) ? out.cards : []).filter(c => c && c.front && c.back).slice(0, 12).map(c => { const t = TOPIC_BY_NAME[String(c.topic || '').toLowerCase()]; return { front: String(c.front), back: String(c.back), topic: t ? t.id : '', src: 'mhub' }; });
+      if (cards.length) { await addCards('MHUB starter', cards); step(`Made ${cards.length} starter flashcards`, true); }
+      await saveSettings({ onboarded: true, profileSummary: String(out.summary || ''), tutorStyle: String(out.tutorStyle || ''), focus: Array.isArray(out.focus) ? out.focus.map(String).slice(0, 6) : [], planText: String(out.plan || ''), planAt: new Date().toISOString(), profileAt: new Date().toISOString() }, true);
+      step('Wrote your study plan and tuned your tutor', true);
+      toast('Your MHUB is personalized');
+      finishOnboard();
+    } catch (e) {
+      step(e && e.code === 'not_granted' ? 'The AI step needs your OK to use Claude. Allow it and press Build again.' : 'The AI step didn’t finish. Your answers are saved; press Build again.');
+      go.disabled = false; go.textContent = 'Try again';
+    }
+  }
+  function finishOnboard() { state.showOnboard = false; const w = $('welcome'); delete w.dataset.ob; setTimeout(() => { setTab('plan'); }, 700); }
+
+  // ---------- tutor ----------
+  const MODES = {
+    tutor: { label: 'Explain', hint: 'Ask about any concept. Answers are tied to how it shows up on the MCAT and to your own misses.', rules: 'Explain concepts clearly and briefly, then show how the concept appears in MCAT passages and the trap answers built around it. End with one quick check question.' },
+    quiz: { label: 'Quiz me', hint: 'One MCAT-style question at a time on your weak spots. Answer and it grades you.', rules: 'Run a quiz. Ask ONE original MCAT-style multiple-choice question (A-D) at a time, targeted at the student\'s weak topics and repeat traps unless they name a topic. Wait for their answer, then grade it, name the trap in the wrong choices, give a one-line heuristic, then ask the next question. If they miss one, call log_mistake.' },
+    passage: { label: 'Practice passage', hint: 'An original passage with 4–5 questions on a weak topic, graded when you answer.', rules: 'Write ONE original MCAT-style passage (250-400 words; experimental for science sections) with 4-5 questions (A-D) on the requested topic or the student\'s weakest topic. Do not reveal answers until the student replies with their choices; then grade, explain each miss with its trap name and heuristic, and call log_mistake for each miss.' },
+    cars: { label: 'CARS coach', hint: 'Passage mapping, author tone, and why the tempting answer is wrong.', rules: 'Coach CARS. Focus on the author\'s main point, tone, and scope; for answer choices, show exactly where a tempting answer goes beyond the passage. Use the student\'s logged CARS misses to target their patterns.' },
+    strategy: { label: 'Strategy', hint: 'Study planning, test-day tactics, and what to fix first given your data.', rules: 'Act as an MCAT strategy coach. Use the student\'s scores, misses, topic coverage, flashcard load and days left to give concrete, prioritized advice.' }
+  };
+  function contextBlock() {
+    const S = [...state.scores].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+    const d = daysUntil(state.settings.testDate);
+    const weak = weakTopics(10).map(t => `${t.name} (misses ${t.misses}, self-rated ${MLEVELS[t.mastery]})`).join('; ');
+    const traps = countBy(state.mistakes, m => (m.trapName || '').trim() || MISS[m.missType]).slice(0, 6).map(([k, n]) => `${k} ×${n}`).join('; ');
+    const recent = [...state.mistakes].sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 12).map(m => `- [${SECTIONS[m.section] ? SECTIONS[m.section].label : m.section}${topicOfMistake(m) ? ' / ' + topicOfMistake(m) : ''}] ${m.trapName ? 'Trap: ' + m.trapName + '. ' : ''}${(m.lesson || '').slice(0, 180)}`).join('\n');
+    const cards = allCards();
+    return `STUDENT CONTEXT (from their MCAT Hub)\nName: ${state.name || 'the student'}\nTarget: ${target()}. Test date: ${state.settings.testDate || 'not set'}${d != null ? ` (${d} days away)` : ''}. Study hours/week: ${state.settings.hours || 'not set'}.\nPractice tests: ${S.length ? S.map(s => `${s.label} ${fmtDate(s.date)}: ${total(s)} (CP ${s.cp}, CARS ${s.cars}, BB ${s.bb}, PS ${s.ps})`).join(' | ') : 'none yet'}\nMisses logged: ${state.mistakes.length}. Most common traps: ${traps || 'none'}\nWeakest topics: ${weak || 'not enough data'}\nFlashcards: ${cards.length} total, ${cards.filter(dueNow).length} due now.\nRecent misses:\n${recent || '(none)'}`;
+  }
+  function tutorRules() {
+    const s = state.settings, p = s.profile || {};
+    const style = s.tutorStyle || `Tone: ${p.tone || 'casual and direct'}. Lead with the answer, short bullets, explicit reasoning only where it prevents a repeat mistake.`;
+    return `You are the MCAT tutor inside ${state.name ? state.name.split(' ')[0] + "'s" : "the student's"} MHUB, their personal MCAT study hub.\nSTANDING STYLE (personalized): ${style}${p.learn && p.learn.length ? ` Learns best with: ${p.learn.join(', ')}.` : ''}\nAlways name the exact trap behind a wrong answer and give a reusable test-taking heuristic. Never reproduce copyrighted AAMC/UWorld question text; write original questions.${s.profileSummary ? `\nPROFILE: ${s.profileSummary}` : ''}${s.focus && s.focus.length ? `\nCURRENT PRIORITIES: ${s.focus.join('; ')}` : ''}${p.notes ? `\nSTUDENT NOTES: ${p.notes}` : ''}\nMODE: ${MODES[state.tMode].label}. ${MODES[state.tMode].rules}\nTools: search_mistakes and get_topic read their Hub; log_mistake saves a miss (use when they get one wrong or share a missed question); add_card saves a flashcard (offer this for content gaps, then call it if they agree or ask). Keep tool use light.\n\n${contextBlock()}`;
+  }
+  const TOOLS = () => [
+    { name: 'search_mistakes', description: 'Search the student\'s logged mistakes. Returns up to `limit` compact entries (section, topic, trap, lesson, heuristic).', inputSchema: { type: 'object', properties: { query: { type: 'string', description: 'words to match; empty for most recent' }, section: { type: 'string', enum: ['cp', 'cars', 'bb', 'ps', 'any'] }, limit: { type: 'number' } } },
+      execute: (inp) => { const q = String(inp.query || '').toLowerCase(), sec = inp.section && inp.section !== 'any' ? inp.section : null; return state.mistakes.filter(m => (!sec || m.section === sec) && (!q || [topicOfMistake(m), m.trapName, m.lesson, m.sentence, m.heuristic].join(' ').toLowerCase().includes(q))).sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, Math.min(25, +inp.limit || 10)).map(m => ({ section: m.section, topic: topicOfMistake(m), source: m.source, trap: m.trapName, lesson: m.lesson, heuristic: m.heuristic, evidence: (m.sentence || '').slice(0, 200) })); } },
+    { name: 'get_topic', description: 'Get one content topic: self-rated mastery, notes, miss count, card count, and the lessons from misses in it. Pass a topic name like "Biochem 2 - Enzymes" or a keyword.', inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
+      execute: (inp) => { const q = String(inp.name || '').toLowerCase(); const t = TOPIC_BY_NAME[q] || ALL_TOPICS.find(x => x.name.toLowerCase().includes(q)); if (!t) throw new Error('No topic matches. Topics use Kaplan chapter names, e.g. "Biochem 2 - Enzymes".'); const st = topicStats()[t.id], tp = state.topics[t.id] || {}; return { topic: t.name, mastery: MLEVELS[st.mastery], notes: (tp.notes || '').slice(0, 2000), misses: st.misses, cards: st.cards, lessons: state.mistakes.filter(m => topicOfMistake(m) === t.name).slice(0, 12).map(m => m.lesson) }; } },
+    { name: 'log_mistake', description: 'Save a missed question to the student\'s Hub. Returns "saved".', inputSchema: { type: 'object', properties: { section: { type: 'string', enum: ['cp', 'cars', 'bb', 'ps'] }, topic: { type: 'string', description: 'Kaplan chapter name for science, e.g. "Biochem 2 - Enzymes"; CARS passage type for CARS' }, missType: { type: 'string', enum: ['scope', 'trap', 'misread', 'timing', 'other'] }, rootCause: { type: 'string', enum: ['content-gap', 'scope-error', 'passage-misread', 'careless'] }, trapName: { type: 'string' }, sentence: { type: 'string', description: 'paraphrased key line' }, lesson: { type: 'string' }, heuristic: { type: 'string' }, source: { type: 'string', enum: ['aamc', 'uworld', 'jw', 'other'] }, exam: { type: 'string' } }, required: ['section', 'lesson'] },
+      execute: async (inp, ctx) => { if (!state.canWrite) throw new Error('This viewer cannot save.'); const sec = ['cp', 'cars', 'bb', 'ps'].includes(inp.section) ? inp.section : 'cp'; let subtopic = '', passageType = ''; const tn = String(inp.topic || ''); if (sec === 'cars') { passageType = (Object.keys(PASSAGE).find(k => tn.toLowerCase().includes(PASSAGE[k].toLowerCase().split(' ')[0])) || ''); } else { const t = TOPIC_BY_NAME[tn.toLowerCase()] || ALL_TOPICS.find(x => x.section === sec && tn && x.name.toLowerCase().includes(tn.toLowerCase())); subtopic = t ? t.name : ''; }
+        const body = { section: sec, source: inp.source || (state.tMode === 'quiz' || state.tMode === 'passage' ? 'other' : 'other'), exam: String(inp.exam || (state.tMode === 'quiz' || state.tMode === 'passage' ? 'Hub tutor' : '')), qnum: '', subtopic, passageType, rootCause: sec === 'cars' ? '' : (inp.rootCause || 'content-gap'), ankiCard: 'no', missType: inp.missType || 'trap', confidence: 'confident-wrong', trapName: String(inp.trapName || ''), sentence: String(inp.sentence || ''), lesson: String(inp.lesson || ''), heuristic: String(inp.heuristic || ''), date: new Date().toISOString(), loggedBy: 'tutor' };
+        if (ctx && ctx.signal && ctx.signal.aborted) throw new Error('cancelled'); await col('mistakes').doc('t' + uid36()).set(body); toast('Tutor logged a mistake'); return 'saved'; } },
+    { name: 'add_card', description: 'Save a flashcard to the student\'s Hub (deck "Tutor cards" unless given). Returns "saved".', inputSchema: { type: 'object', properties: { front: { type: 'string' }, back: { type: 'string' }, topic: { type: 'string', description: 'Kaplan chapter name' }, deck: { type: 'string' } }, required: ['front', 'back'] },
+      execute: async (inp) => { if (!state.canWrite) throw new Error('This viewer cannot save.'); const t = TOPIC_BY_NAME[String(inp.topic || '').toLowerCase()] || (inp.topic ? ALL_TOPICS.find(x => x.name.toLowerCase().includes(String(inp.topic).toLowerCase())) : null); await addCards(String(inp.deck || 'Tutor cards'), [{ front: String(inp.front), back: String(inp.back), topic: t ? t.id : '', src: 'tutor' }]); toast('Tutor added a card'); return 'saved'; } }
+  ];
+  function renderTutor() {
+    chipRow($('t-modes'), Object.keys(MODES).map(k => [k, MODES[k].label]), state.tMode, k => { state.tMode = k; renderTutor(); });
+    $('t-modehint').textContent = MODES[state.tMode].hint;
+    const unavailable = state.sampleChecked && !sample;
+    $('t-unavail').hidden = !unavailable; document.querySelector('.chat').hidden = unavailable; $('t-send').disabled = unavailable || state.tBusy; $('t-stop').hidden = !state.tBusy;
+    const el = $('t-msgs');
+    el.innerHTML = state.tMsgs.map(m => m.role === 'user' ? `<div class="msg user">${m.img ? `<img src="${m.img}" alt="Attached image">` : ''}${esc(m.content)}</div>` : m.role === 'tool' ? `<div class="msg tool">${esc(m.content)}</div>` : `<div class="msg ai">${mdToHtml(m.content) || '<span class="hint">Thinking…</span>'}</div>`).join('');
+    const weak = weakTopics(3);
+    const w0 = weak[0] ? weak[0].name : 'my weakest topic';
+    const sugg = state.tMsgs.length ? [] : ({
+      tutor: [`Explain ${w0} the way the MCAT tests it`, 'What is my most repeated trap, and how do I beat it?', 'Make 5 flashcards for my weakest content gaps'],
+      quiz: [`Quiz me on ${w0}`, 'Quiz me on my repeat traps, mixed sections', 'Quiz me on amino acids'],
+      passage: [`Write a passage on ${w0}`, weak[1] ? `Write a passage on ${weak[1].name}` : 'Write a Bio/Biochem experiment passage', 'Write a Psych/Soc study-design passage'],
+      cars: ['Give me a short CARS passage and 4 questions', 'Why do I keep missing CARS scope questions?', 'Teach me a 3-step passage map'],
+      strategy: ['What should I fix first?', 'Plan my next 7 days', 'How should I review a full-length?']
+    })[state.tMode];
+    $('t-suggest').innerHTML = sugg.map(s => `<button>${esc(s)}</button>`).join('');
+    $('t-suggest').querySelectorAll('button').forEach(b => b.addEventListener('click', () => { $('t-input').value = b.textContent; sendTutor(); }));
+    $('t-attach').hidden = !state.tImage;
+    if (state.tImage) $('t-attach').innerHTML = `Image attached: ${esc(state.tImage.name)} <button class="icon-btn" id="t-unattach">Remove</button>`, $('t-unattach').addEventListener('click', () => { state.tImage = null; renderTutor(); });
+  }
+  async function sendTutor() {
+    if (!sample || state.tBusy) return;
+    const text = $('t-input').value.trim(); if (!text && !state.tImage) return;
+    const img = state.tImage; state.tImage = null; $('t-input').value = '';
+    state.tMsgs.push({ role: 'user', content: text || 'Here is a question I missed. Explain it and log it.', img: img ? img.url : null });
+    const ai = { role: 'assistant', content: '' }; state.tMsgs.push(ai);
+    state.tBusy = true; renderTutor(); scrollChat();
+    const ctl = new AbortController(); state.tCtl = ctl;
+    const turns = [{ role: 'user', content: tutorRules() }, { role: 'assistant', content: 'Got it. I have your Hub context.' }];
+    state.tMsgs.filter(m => m.role !== 'tool' && m !== ai).slice(-16).forEach(m => turns.push({ role: m.role, content: m.content }));
+    try {
+      const opts = { cache: false, signal: ctl.signal, tools: TOOLS(), onText: ({ text }) => { ai.content = text; renderMsgsOnly(); } };
+      if (img) opts.images = [img.blob];
+      const res = await sample(turns, opts);
+      ai.content = res.text || ai.content;
+    } catch (e) {
+      if (e && e.code === 'cancelled') ai.content = (ai.content || '') + '\n\n*Stopped.*';
+      else if (e && e.code === 'not_granted') ai.content = 'The tutor needs your OK to use Claude. Allow it when asked, or turn it on in this page\'s permissions.';
+      else if (e && e.code === 'rate_limited') ai.content = 'Too many requests right now. Wait a minute and try again.';
+      else ai.content = (e && e.text) ? e.text : 'Something went wrong reaching Claude. Try again.';
+    }
+    state.tBusy = false; state.tCtl = null; ls('mcat-hub-chat', JSON.stringify({ mode: state.tMode, msgs: state.tMsgs.slice(-30).map(m => ({ role: m.role, content: m.content })) }));
+    renderTutor(); scrollChat();
+  }
+  function renderMsgsOnly() { const el = $('t-msgs'); const last = el.lastElementChild; const m = state.tMsgs[state.tMsgs.length - 1]; if (last && m && m.role === 'assistant') last.innerHTML = mdToHtml(m.content) || '<span class="hint">Thinking…</span>'; }
+  function scrollChat() { const el = $('t-msgs').lastElementChild; if (el) el.scrollIntoView({ block: 'nearest' }); }
+  $('t-send').addEventListener('click', sendTutor);
+  $('t-input').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); sendTutor(); } });
+  $('t-stop').addEventListener('click', () => state.tCtl && state.tCtl.abort());
+  $('t-clear').addEventListener('click', () => { if (state.tBusy) return; state.tMsgs = []; ls('mcat-hub-chat', ''); renderTutor(); });
+  $('t-img').addEventListener('click', () => $('t-file').click());
+  $('t-file').addEventListener('change', e => { const f = e.target.files[0]; if (!f) return; if (!state.sampleImages) { toast('Images aren’t available for the tutor in this view'); e.target.value = ''; return; } state.tImage = { blob: f, name: f.name, url: URL.createObjectURL(f) }; e.target.value = ''; renderTutor(); $('t-input').focus(); });
+  $('t-input').addEventListener('paste', e => { const it = [...(e.clipboardData || {}).items || []].find(i => i.type && i.type.startsWith('image/')); if (it && state.sampleImages) { const f = it.getAsFile(); state.tImage = { blob: f, name: 'pasted image', url: URL.createObjectURL(f) }; renderTutor(); } });
+  try { const saved = JSON.parse(ls('mcat-hub-chat') || 'null'); if (saved && saved.msgs) { state.tMsgs = saved.msgs; state.tMode = MODES[saved.mode] ? saved.mode : 'tutor'; } } catch (e) {}
+
+  // ---------- flashcards ----------
+  async function addCards(deck, list, onProgress) {
+    deck = (deck || 'My cards').trim() || 'My cards';
+    let sets = state.cardsets.filter(s => (s.deck || 'My cards') === deck).map(s => ({ id: s._id, n: Object.keys(s.cards || {}).length }));
+    let i = 0, done = 0;
+    const now = Date.now();
+    const mk = c => ({ front: c.front, back: c.back, topic: c.topic || '', src: c.src || 'you', ease: 2.5, ivl: 0, due: 0, reps: 0, lapses: 0, created: now });
+    while (i < list.length) {
+      let s = sets.find(x => x.n < SET_CAP);
+      const room = s ? SET_CAP - s.n : SET_CAP;
+      const chunk = list.slice(i, i + room); const cards = {}; chunk.forEach(c => { cards['c' + uid36() + Math.random().toString(36).slice(2, 5)] = mk(c); });
+      if (s) { await col('cardsets').doc(s.id).update({ cards }); s.n += chunk.length; }
+      else { const id = 'd' + uid36(); await col('cardsets').doc(id).set({ deck, cards, created: now }); sets.push({ id, n: chunk.length }); }
+      i += chunk.length; done += chunk.length; if (onProgress) onProgress(done, list.length);
+    }
+  }
+  function buildQueue(deck) {
+    const cards = allCards().filter(c => deck === '__all' || c.deck === deck);
+    const due = cards.filter(dueNow).sort((a, b) => (+a.due || 0) - (+b.due || 0));
+    const fresh = cards.filter(isNew).sort((a, b) => (+a.created || 0) - (+b.created || 0)).slice(0, newLimitLeft());
+    return [...due, ...fresh].map(c => ({ setId: c.setId, cid: c.cid }));
+  }
+  function findCard(ref) { const s = state.cardsets.find(x => x._id === ref.setId); const c = s && s.cards && s.cards[ref.cid]; return c ? { ...c, cid: ref.cid, setId: ref.setId, deck: s.deck } : null; }
+  function schedule(c, g) {
+    let ease = +c.ease || 2.5, ivl = +c.ivl || 0, reps = +c.reps || 0, lapses = +c.lapses || 0; const day = 864e5;
+    if (g === 0) { lapses++; reps = 0; ivl = 0; ease = Math.max(1.3, ease - 0.2); return { ease, ivl, reps, lapses, due: Date.now() + 10 * 60e3 }; }
+    if (g === 1) { ivl = Math.max(1, Math.round((ivl || 1) * 1.2)); ease = Math.max(1.3, ease - 0.15); }
+    if (g === 2) { ivl = reps === 0 ? 1 : reps === 1 ? 3 : Math.round(ivl * ease); }
+    if (g === 3) { ivl = reps === 0 ? 4 : Math.round(Math.max(ivl, 1) * ease * 1.3); ease += 0.15; }
+    reps++; return { ease: Math.round(ease * 100) / 100, ivl, reps, lapses, due: Date.now() + ivl * day };
+  }
+  function ivlLabel(c, g) { const s = schedule(c, g); if (g === 0) return '10m'; return s.ivl < 30 ? s.ivl + 'd' : s.ivl < 365 ? Math.round(s.ivl / 30) + 'mo' : (s.ivl / 365).toFixed(1) + 'y'; }
+  function renderCards() {
+    const el = $('fc-study');
+    if (!state.ready) { el.innerHTML = '<div class="card"><p class="empty">Loading your cards…</p></div>'; $('fc-decks').innerHTML = ''; return; }
+    const st = state.study;
+    if (st) {
+      while (st.queue.length && !findCard(st.queue[0])) st.queue.shift();
+      const ref = st.queue[0], c = ref && findCard(ref);
+      if (!c) { el.innerHTML = `<div class="card fc"><p class="h2">Done for now</p><p class="hint">${st.reviewed} cards reviewed. Come back when more are due.</p><div class="row"><button class="btn ghost" id="fc-end">Back to decks</button></div></div>`; $('fc-end').addEventListener('click', () => { state.study = null; renderCards(); }); }
+      else {
+        const t = c.topic && TOPIC_BY_ID[c.topic];
+        el.innerHTML = `<div class="card fc"><div class="spread"><span class="row">${t ? sectionTag(t.section) + `<span class="tag-o">${esc(t.name)}</span>` : ''}<span class="hint">${esc(c.deck)}</span></span><span class="hint">${st.queue.length} left${isNew(c) ? ' · new' : ''}</span></div>
+          <div class="fc-face">${esc(c.front)}</div>
+          ${st.showBack ? `<div class="fc-back">${esc(c.back)}</div><div class="grades">${[['Again', 'g-again'], ['Hard', 'g-hard'], ['Good', 'g-good'], ['Easy', 'g-easy']].map(([l, cl], g) => `<button class="btn ${cl}" data-g="${g}">${l}<small>${ivlLabel(c, g)}</small></button>`).join('')}</div>`
+            : `<div class="row"><button class="btn" id="fc-show">Show answer</button><span class="hint">Space to flip · 1–4 to grade</span></div>`}
+          <div class="row"><button class="icon-btn" id="fc-quit">End session</button>${state.canWrite ? `<button class="icon-btn" id="fc-del">Delete card</button>` : ''}${sample ? `<button class="icon-btn" id="fc-ask">Ask the tutor about this</button>` : ''}</div></div>`;
+        const show = $('fc-show'); if (show) show.addEventListener('click', () => { st.showBack = true; renderCards(); });
+        el.querySelectorAll('[data-g]').forEach(b => b.addEventListener('click', () => grade(+b.dataset.g)));
+        $('fc-quit').addEventListener('click', () => { state.study = null; renderCards(); });
+        const del = $('fc-del'); if (del) del.addEventListener('click', async () => { st.queue.shift(); try { await deleteCard(c); toast('Card deleted'); } catch (e) { toast(errMsg(e)); } renderCards(); });
+        const ask = $('fc-ask'); if (ask) ask.addEventListener('click', () => { state.tMode = 'tutor'; setTab('tutor'); $('t-input').value = `Help me understand this flashcard:\nFront: ${c.front}\nBack: ${c.back}`; $('t-input').focus(); });
+      }
+    } else {
+      const decks = deckStats(), all = allCards();
+      const due = all.filter(dueNow).length, fresh = Math.min(newLimitLeft(), all.filter(isNew).length);
+      el.innerHTML = all.length ? `<div class="card"><div class="spread"><div><p class="h2">${due + fresh} cards today</p><p class="hint">${due} due for review · ${fresh} new (limit ${state.settings.newPerDay == null ? 20 : state.settings.newPerDay}/day, change in Plan)</p></div><button class="btn" id="fc-all" ${due + fresh ? '' : 'disabled'}>Study all</button></div></div>`
+        : `<div class="card"><p class="h2">No flashcards yet</p><p class="hint" style="margin-top:4px">Import your Anki deck below, add cards by hand, or let the tutor make them from your misses.</p></div>`;
+      const all_ = $('fc-all'); if (all_) all_.addEventListener('click', () => startStudy('__all'));
+    }
+    const decks = deckStats();
+    $('fc-decks').innerHTML = decks.length ? decks.map(d => `<div class="deck-row"><span>${esc(d.deck)}</span><span class="num-due" title="Due">${d.due}</span><span class="num-new" title="New">${d.fresh}</span><span class="row" style="gap:4px"><span class="hint">${d.total}</span><button class="btn ghost sm" data-deck="${esc(d.deck)}" ${d.due + d.fresh ? '' : 'disabled'}>Study</button></span></div>`).join('') : '<p class="empty">No decks yet.</p>';
+    $('fc-decks').querySelectorAll('[data-deck]').forEach(b => b.addEventListener('click', () => startStudy(b.dataset.deck)));
+    $('fc-deck-list').innerHTML = decks.map(d => `<option value="${esc(d.deck)}">`).join('');
+    if (!$('fc-topic').options.length) $('fc-topic').innerHTML = '<option value="">—</option>' + Object.keys(TOPICS).map(s => `<optgroup label="${SECTIONS[s].label}">${TOPICS[s].map(n => `<option value="${slug(n)}">${esc(n)}</option>`).join('')}</optgroup>`).join('');
+    $('fc-add').hidden = !state.canWrite; $('fc-import-btn').hidden = !state.canWrite;
+  }
+  async function deleteCard(c) { const s = state.cardsets.find(x => x._id === c.setId); if (!s) return; const cards = { ...s.cards }; delete cards[c.cid]; const body = { deck: s.deck || 'My cards', cards, created: s.created || Date.now() }; await col('cardsets').doc(c.setId).set(body); }
+  function startStudy(deck) { state.study = { deck, queue: buildQueue(deck), showBack: false, reviewed: 0 }; renderCards(); }
+  async function grade(g) {
+    const st = state.study; if (!st || !st.showBack) return;
+    const ref = st.queue.shift(), c = findCard(ref); if (!c) return renderCards();
+    const wasNew = isNew(c), next = schedule(c, g);
+    st.showBack = false; st.reviewed++;
+    if (g === 0) st.queue.splice(Math.min(st.queue.length, 4), 0, ref);
+    renderCards();
+    try {
+      await col('cardsets').doc(ref.setId).update({ cards: { [ref.cid]: next } });
+      if (wasNew) { const log = state.settings.newLog || {}; const n = log.date === todayStr() ? (+log.count || 0) + 1 : 1; await saveSettings({ newLog: { date: todayStr(), count: n } }, true); }
+    } catch (e) { toast(errMsg(e)); }
+  }
+  document.addEventListener('keydown', e => {
+    if (state.tab !== 'cards' || !state.study || /INPUT|TEXTAREA|SELECT/.test((e.target || {}).tagName)) return;
+    if (e.key === ' ' && !state.study.showBack) { e.preventDefault(); state.study.showBack = true; renderCards(); }
+    else if (state.study.showBack && ['1', '2', '3', '4'].includes(e.key)) grade(+e.key - 1);
+  });
+  $('fc-form').addEventListener('submit', async e => {
+    e.preventDefault(); if (!db) return;
+    try { await addCards($('fc-deck').value || 'My cards', [{ front: $('fc-front').value.trim(), back: $('fc-back').value.trim(), topic: $('fc-topic').value, src: 'you' }]); toast('Card saved'); $('fc-front').value = ''; $('fc-back').value = ''; $('fc-front').focus(); }
+    catch (err) { toast(errMsg(err)); }
+  });
+  // Anki plain-text import
+  function htmlToText(h) { const d = document.createElement('div'); d.innerHTML = String(h).replace(/<br\s*\/?>/gi, '\n').replace(/<\/(div|p|li)>/gi, '\n').replace(/<img[^>]*>/gi, ' (image) ').replace(/\[sound:[^\]]*\]/g, ''); return (d.textContent || '').replace(/\n{3,}/g, '\n\n').trim(); }
+  function parseAnki(txt) {
+    const lines = txt.split(/\r?\n/); let sep = '\t', htmlOn = true; const meta = {};
+    const rows = [];
+    for (const ln of lines) {
+      if (ln.startsWith('#')) { const m = ln.match(/^#([a-z ]+):(.*)$/i); if (m) { const k = m[1].trim().toLowerCase(), v = m[2].trim(); meta[k] = v; if (k === 'separator') sep = ({ tab: '\t', comma: ',', semicolon: ';', pipe: '|', space: ' ' })[v.toLowerCase()] || v; if (k === 'html') htmlOn = v === 'true'; } continue; }
+      if (!ln.trim()) continue;
+      rows.push(splitRow(ln, sep));
+    }
+    const skip = new Set(); ['guid column', 'notetype column', 'tags column'].forEach(k => { if (meta[k]) skip.add(+meta[k] - 1); });
+    const deckCol = meta['deck column'] ? +meta['deck column'] - 1 : -1; if (deckCol >= 0) skip.add(deckCol);
+    const tagCol = meta['tags column'] ? +meta['tags column'] - 1 : -1;
+    const out = [];
+    rows.forEach(r => {
+      const fields = r.filter((_, i) => !skip.has(i)); if (!fields.length || !fields[0]) return;
+      const clean = s => htmlOn ? htmlToText(s) : String(s).trim();
+      let front = clean(fields[0]), back = clean(fields.slice(1).filter(Boolean).join('\n\n'));
+      if (/\{\{c\d+::/.test(front)) { const full = front.replace(/\{\{c\d+::(.*?)(::.*?)?\}\}/g, '$1'); const hidden = front.replace(/\{\{c\d+::(.*?)(::(.*?))?\}\}/g, (m, a, b, hint) => '[' + (hint || '…') + ']'); back = full + (back ? '\n\n' + back : ''); front = hidden; }
+      if (!back) back = '(no back)';
+      const deck = deckCol >= 0 && r[deckCol] ? r[deckCol].split('::').pop() : '';
+      const tags = tagCol >= 0 ? (r[tagCol] || '').toLowerCase() : '';
+      const topic = guessTopic(front + ' ' + tags);
+      out.push({ front: front.slice(0, 4000), back: back.slice(0, 6000), deck, topic, src: 'anki' });
+    });
+    return out;
+  }
+  function splitRow(line, sep) {
+    const out = []; let cur = '', q = false;
+    for (let i = 0; i < line.length; i++) { const ch = line[i];
+      if (q) { if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (ch === '"') q = false; else cur += ch; }
+      else if (ch === '"' && cur === '') q = true; else if (ch === sep) { out.push(cur); cur = ''; } else cur += ch; }
+    out.push(cur); return out;
+  }
+  const KW = [['amino acid', 'biochem-1-amino-acids-peptides-and-proteins'], ['enzyme', 'biochem-2-enzymes'], ['glycoly', 'biochem-9-carb-metabolism-i-glycolysis-glycogen-gluconeogenesis-ppp'], ['krebs', 'biochem-10-carb-metabolism-ii-aerobic-respiration'], ['citric acid', 'biochem-10-carb-metabolism-ii-aerobic-respiration'], ['electron transport', 'biochem-10-carb-metabolism-ii-aerobic-respiration'], ['lipid', 'biochem-5-lipid-structure-and-function'], ['dna', 'biochem-6-dna-and-biotechnology'], ['rna', 'biochem-7-rna-and-the-genetic-code'], ['membrane', 'biochem-8-biological-membranes'], ['hormone', 'biology-5-the-endocrine-system'], ['neuron', 'biology-4-the-nervous-system'], ['immune', 'biology-8-the-immune-system'], ['kidney', 'biology-10-homeostasis'], ['nephron', 'biology-10-homeostasis'], ['heart', 'biology-7-the-cardiovascular-system'], ['lung', 'biology-6-the-respiratory-system'], ['acid', 'gen-chem-10-acids-and-bases'], ['buffer', 'gen-chem-10-acids-and-bases'], ['redox', 'gen-chem-11-oxidation-reduction-reactions'], ['electrochem', 'gen-chem-12-electrochemistry'], ['galvanic', 'gen-chem-12-electrochemistry'], ['equilibri', 'gen-chem-6-equilibrium'], ['kinetic', 'gen-chem-5-chemical-kinetics'], ['enthalpy', 'gen-chem-7-thermochemistry'], ['gas law', 'gen-chem-8-the-gas-phase'], ['spectroscop', 'orgo-11-spectroscopy'], ['nmr', 'orgo-11-spectroscopy'], ['chromatograph', 'orgo-12-separations-and-purifications'], ['circuit', 'physics-6-circuits'], ['fluid', 'physics-4-fluids'], ['optic', 'physics-8-light-and-optics'], ['lens', 'physics-8-light-and-optics'], ['sound', 'physics-7-waves-and-sound'], ['memory', 'behavioral-sci-3-learning-and-memory'], ['conditioning', 'behavioral-sci-3-learning-and-memory'], ['perception', 'behavioral-sci-2-sensation-and-perception'], ['sensation', 'behavioral-sci-2-sensation-and-perception'], ['personality', 'behavioral-sci-6-identity-and-personality'], ['disorder', 'behavioral-sci-7-psychological-disorders'], ['stratification', 'behavioral-sci-12-social-stratification'], ['emotion', 'behavioral-sci-5-motivation-emotion-and-stress'], ['motivation', 'behavioral-sci-5-motivation-emotion-and-stress']];
+  function guessTopic(s) { s = s.toLowerCase(); const hit = KW.find(([k]) => s.includes(k)); return hit && TOPIC_BY_ID[hit[1]] ? hit[1] : ''; }
+  $('fc-import-btn').addEventListener('click', () => $('fc-import').click());
+  $('fc-import').addEventListener('change', async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f || !db) return;
+    const st = $('fc-import-status');
+    try {
+      const cards = parseAnki(await f.text());
+      if (!cards.length) { st.textContent = 'No cards found in that file. Export as "Notes in Plain Text (.txt)" from Anki.'; return; }
+      const byDeck = {}; const fallback = f.name.replace(/\.[^.]+$/, '');
+      cards.forEach(c => { const d = c.deck || fallback; (byDeck[d] = byDeck[d] || []).push(c); });
+      let done = 0;
+      for (const d of Object.keys(byDeck)) await addCards(d, byDeck[d], () => { st.textContent = `Importing… ${Math.min(cards.length, done + SET_CAP)} of ${cards.length}`; done += SET_CAP; });
+      st.textContent = `Imported ${cards.length} cards into ${Object.keys(byDeck).length} deck${Object.keys(byDeck).length > 1 ? 's' : ''}.`;
+      toast(`Imported ${cards.length} cards`);
+    } catch (err) { st.textContent = 'Import stopped: ' + errMsg(err); }
+  });
+
+  // ---------- topics ----------
+  function mColor(m) { return `var(--m${Math.max(0, Math.min(4, m))})`; }
+  function renderTopics() {
+    $('m-legend').innerHTML = MLEVELS.map((l, i) => `<span><i style="background:${mColor(i)}"></i>${l}</span>`).join('');
+    const st = topicStats();
+    $('t-overview').innerHTML = `<div class="stack" style="gap:10px">${Object.keys(TOPICS).map(s => { const ts = ALL_TOPICS.filter(t => t.section === s); const solid = ts.filter(t => st[t.id].mastery >= 3).length; return `<div><div class="spread" style="margin-bottom:4px"><span style="font-size:13px;font-weight:550">${SECTIONS[s].label}</span><span class="hint">${solid}/${ts.length} solid or better</span></div><div class="mastery-strip">${ts.map(t => `<span title="${esc(t.name)} · ${MLEVELS[st[t.id].mastery]}${st[t.id].misses ? ' · ' + st[t.id].misses + ' misses' : ''}" style="background:${mColor(st[t.id].mastery)};${st[t.id].misses >= 3 ? 'outline:2px solid var(--red-text);outline-offset:-2px' : ''}"></span>`).join('')}</div></div>`; }).join('')}<p class="hint">Red outline = 3+ misses logged in that topic.</p></div>`;
+    chipRow($('tp-section'), [['all', 'All sections'], ...Object.keys(SECTIONS).map(k => [k, SECTIONS[k].label])], state.tpSection, k => { state.tpSection = k; renderTopics(); });
+    const list = ALL_TOPICS.filter(t => state.tpSection === 'all' || t.section === state.tpSection);
+    $('topic-list').innerHTML = list.map(t => { const s = st[t.id], tp = state.topics[t.id] || {}; return `<button class="topic-row" data-tid="${t.id}"><span class="dot" style="background:${mColor(s.mastery)}"></span><span class="nm">${esc(t.name)}</span><span class="st">${s.misses ? `<span style="color:var(--red-text)">${s.misses} miss${s.misses > 1 ? 'es' : ''}</span> · ` : ''}${s.cards ? s.cards + ' cards · ' : ''}${(tp.files || []).length ? (tp.files.length + ' files · ') : ''}${MLEVELS[s.mastery]}</span></button>`; }).join('');
+    $('topic-list').querySelectorAll('[data-tid]').forEach(b => b.addEventListener('click', () => { state.openTopic = b.dataset.tid; renderTopics(); $('topic-detail').scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
+    renderTopicDetail(st);
+  }
+  function renderTopicDetail(st) {
+    const el = $('topic-detail'), t = state.openTopic && TOPIC_BY_ID[state.openTopic];
+    if (!t) { el.innerHTML = ''; return; }
+    const s = st[t.id], tp = state.topics[t.id] || {}, misses = state.mistakes.filter(m => topicOfMistake(m) === t.name);
+    el.innerHTML = `<div class="card stack" style="gap:12px"><div class="spread"><span class="row">${sectionTag(t.section)}<span class="h2">${esc(t.name)}</span></span><button class="icon-btn" id="td-close">Close</button></div>
+      <div><label>How well do you know it?</label><div class="mseg">${MLEVELS.map((l, i) => `<button data-m="${i}" aria-pressed="${s.mastery === i}" style="border-color:${s.mastery === i ? mColor(i) : 'var(--border-strong)'}" ${state.canWrite ? '' : 'disabled'}><i style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${mColor(i)};margin-right:5px"></i>${l}</button>`).join('')}</div></div>
+      <div><label for="td-notes">Your notes</label><textarea id="td-notes" rows="4" placeholder="Key facts, formulas, mnemonics…" ${state.canWrite ? '' : 'disabled'}>${esc(tp.notes || '')}</textarea><p class="hint" id="td-saved"></p></div>
+      <div><div class="spread" style="margin-bottom:6px"><label style="margin:0">Files</label>${assets && state.canWrite ? `<span class="row"><button class="btn ghost sm" id="td-upload">Upload file</button><input type="file" id="td-file" accept="image/*,application/pdf,.pdf,.csv,.md,.txt" hidden></span>` : ''}</div><div class="file-list">${(tp.files || []).map((f, i) => `<div class="file-item">${/^image\//.test(f.type) ? `<img src="/_blob/${esc(f.id)}" alt="">` : ''}<a href="/_blob/${esc(f.id)}" target="_blank" rel="noopener">${esc(f.name)}</a>${state.canWrite ? `<button class="icon-btn" data-fdel="${i}">Remove</button>` : ''}</div>`).join('') || `<p class="hint">${assets ? 'Attach notes, diagrams or PDFs for this topic.' : 'File uploads are available to the Hub owner on claude.ai.'}</p>`}</div></div>
+      <div class="row">${sample ? `<button class="btn sm" id="td-tutor">Ask the tutor</button><button class="btn ghost sm" id="td-quiz">Quiz me</button><button class="btn ghost sm" id="td-cards">Make 5 cards</button>` : ''}${s.cards ? `<button class="btn ghost sm" id="td-study">Study ${s.cards} cards</button>` : ''}</div>
+      <div><p class="h" style="margin-bottom:6px">Misses in this topic (${misses.length})</p>${misses.length ? `<div class="entries">${misses.slice(0, 8).map(m => `<div class="entry"><p class="ls">${esc(m.lesson)}</p>${m.heuristic ? `<p class="tr"><b class="good">Next time:</b> ${esc(m.heuristic)}</p>` : ''}<p class="meta">${esc(SOURCES[m.source] || '')} · ${esc(m.exam || '')} · ${fmtDate(m.date)}</p></div>`).join('')}</div>` : '<p class="hint">None logged.</p>'}</div></div>`;
+    $('td-close').addEventListener('click', () => { state.openTopic = null; renderTopics(); });
+    el.querySelectorAll('[data-m]').forEach(b => b.addEventListener('click', () => saveTopic(t.id, { mastery: +b.dataset.m })));
+    const notes = $('td-notes'); let nt; notes.addEventListener('input', () => { clearTimeout(nt); $('td-saved').textContent = 'Saving…'; nt = setTimeout(async () => { await saveTopic(t.id, { notes: notes.value }, true); $('td-saved').textContent = 'Saved'; }, 900); });
+    const up = $('td-upload'); if (up) { up.addEventListener('click', () => $('td-file').click()); $('td-file').addEventListener('change', async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; up.disabled = true; up.textContent = 'Uploading…'; try { const r = await assets.upload(f); await saveTopic(t.id, { files: [...(tp.files || []), { id: r.id, name: f.name, type: r.contentType || f.type, size: r.sizeBytes }] }); toast('Uploaded'); } catch (err) { toast(err && err.code === 'too_large' ? 'That file is over 20 MB' : err && err.code === 'unsupported_type' ? 'That file type isn’t supported' : 'Upload failed. Try again.'); } up.disabled = false; up.textContent = 'Upload file'; }); }
+    el.querySelectorAll('[data-fdel]').forEach(b => b.addEventListener('click', async () => { const files = [...(tp.files || [])]; const [f] = files.splice(+b.dataset.fdel, 1); await saveTopic(t.id, { files }); try { if (assets && f) await assets.delete(f.id); } catch (e) {} }));
+    const go = (mode, text) => { state.tMode = mode; state.tMsgs = []; setTab('tutor'); $('t-input').value = text; sendTutor(); };
+    const a = $('td-tutor'); if (a) a.addEventListener('click', () => { state.tMode = 'tutor'; setTab('tutor'); $('t-input').value = `Teach me ${t.name} the way the MCAT tests it. Start from my notes and misses on it.`; $('t-input').focus(); });
+    const q = $('td-quiz'); if (q) q.addEventListener('click', () => go('quiz', `Quiz me on ${t.name}`));
+    const c = $('td-cards'); if (c) c.addEventListener('click', () => go('tutor', `Make 5 high-yield flashcards for ${t.name}, aimed at my misses and notes there, and save them with add_card (topic "${t.name}").`));
+    const sd = $('td-study'); if (sd) sd.addEventListener('click', () => { const refs = allCards().filter(x => x.topic === t.id).map(x => ({ setId: x.setId, cid: x.cid })); state.study = { deck: t.name, queue: refs, showBack: false, reviewed: 0 }; setTab('cards'); });
+  }
+  async function saveTopic(id, patch, quiet) {
+    if (!db) return; const cur = state.topics[id];
+    state.topics[id] = { ...(cur || {}), ...patch }; if (!quiet) renderTopics();
+    try { if (cur) await col('topics').doc(id).update(patch); else await col('topics').doc(id).set({ ...patch }); } catch (e) { toast(errMsg(e)); }
+  }
+
+  // ---------- mistakes ----------
+  function chipRow(el, opts, cur, onPick) {
+    el.innerHTML = opts.map(([k, l]) => `<button class="chip" aria-pressed="${k === cur}" data-k="${esc(k)}">${esc(l)}</button>`).join('');
+    el.querySelectorAll('.chip').forEach(b => b.addEventListener('click', () => onPick(b.dataset.k)));
+  }
+  function filtered() {
+    const q = state.search.trim().toLowerCase();
+    return state.mistakes.filter(m => (state.fSection === 'all' || m.section === state.fSection) && (state.fSource === 'all' || m.source === state.fSource) &&
+      (!q || [m.exam, m.qnum, topicOfMistake(m), m.sentence, m.lesson, m.trapName, m.heuristic, MISS[m.missType], ROOT[m.rootCause]].join(' ').toLowerCase().includes(q)))
+      .sort((a, b) => (b.date || '').localeCompare(a.date || '') || String(b._id).localeCompare(String(a._id)));
+  }
+  function renderLog() {
+    const counts = s => state.mistakes.filter(m => m.section === s).length;
+    chipRow($('f-section'), [['all', `All sections (${state.mistakes.length})`], ...Object.keys(SECTIONS).map(k => [k, `${SECTIONS[k].label} (${counts(k)})`])], state.fSection, k => { state.fSection = k; state.rCurrent = null; render(); });
+    const srcs = Object.keys(SOURCES).filter(k => state.mistakes.some(m => m.source === k));
+    chipRow($('f-source'), [['all', 'Any source'], ...srcs.map(k => [k, SOURCES[k]])], state.fSource, k => { state.fSource = k; state.rCurrent = null; render(); });
+    const list = filtered();
+    $('count-line').textContent = `${list.length} of ${state.mistakes.length} mistakes`;
+    $('retest-btn').textContent = state.retestOn ? 'Close retest' : 'Retest these';
+    $('export-btn').hidden = !downloads; $('logger').hidden = !state.canWrite;
+    renderRetest(list);
+    const el = $('entries');
+    if (!state.ready) { el.innerHTML = '<p class="empty">Loading your mistakes…</p>'; return; }
+    if (!list.length) { el.innerHTML = `<p class="empty">${state.mistakes.length ? 'No mistakes match these filters.' : 'No mistakes yet. Send Claude a screenshot of a missed question, use the Tutor, or log one above.'}</p>`; return; }
+    el.innerHTML = list.map(m => {
+      const extra = m.section === 'cars' ? (m.passageType ? `<span class="tag-o">${esc(PASSAGE[m.passageType] || m.passageType)}</span>` : '') : (m.rootCause ? `<span class="tag-o">${esc(ROOT[m.rootCause] || m.rootCause)}</span>` : '');
+      const del = state.confirmDel === m._id ? `<span class="confirm">Delete this?<button class="btn danger sm" data-act="del-yes" data-id="${esc(m._id)}">Delete</button><button class="btn ghost sm" data-act="del-no">Keep</button></span>` : `<button class="icon-btn" data-act="card" data-id="${esc(m._id)}">Make card</button><button class="icon-btn" data-act="edit" data-id="${esc(m._id)}">Edit</button><button class="icon-btn" data-act="del" data-id="${esc(m._id)}">Delete</button>`;
+      const rt = m.retest && (m.retest.right || m.retest.wrong) ? ` · retest ${m.retest.right || 0}✓ ${m.retest.wrong || 0}✗` : '';
+      return `<article class="entry"><div class="entry-top"><div class="entry-tags">${sectionTag(m.section)}<span class="tag-o">${esc(SOURCES[m.source] || 'Other')}</span><span class="tag-o">${esc(MISS[m.missType] || m.missType || '')}</span>${extra}<span class="ex">${esc(m.exam || '')}${m.qnum ? ' · ' + esc(m.qnum) : ''}</span></div>${state.canWrite ? `<div class="row" style="gap:2px">${del}</div>` : ''}</div>
+        ${m.subtopic ? `<p class="meta" style="margin:0 0 6px"><button class="icon-btn" style="padding:0" data-goto="topics" data-topic="${slug(m.subtopic)}">${esc(m.subtopic)}</button></p>` : ''}
+        ${m.sentence ? `<p class="ev">${esc(m.sentence)}</p>` : ''}
+        ${m.trapName ? `<p class="tr"><b class="bad">Trap:</b> ${esc(m.trapName)}</p>` : ''}
+        <p class="ls">${esc(m.lesson || '')}</p>
+        ${m.heuristic ? `<p class="tr"><b class="good">Next time:</b> ${esc(m.heuristic)}</p>` : ''}
+        <p class="meta">${esc(CONF[m.confidence] || '')}${m.ankiCard === 'yes' ? ' · card made' : ''} · ${fmtDate(m.date)}${rt}${m.loggedBy && m.loggedBy !== 'import' ? ' · logged by ' + esc(m.loggedBy) : ''}</p></article>`;
+    }).join('');
+    el.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => onEntryAction(b.dataset.act, b.dataset.id)));
+  }
+  async function onEntryAction(act, id) {
+    if (act === 'del') { state.confirmDel = id; render(); return; }
+    if (act === 'del-no') { state.confirmDel = null; render(); return; }
+    if (act === 'del-yes') { state.confirmDel = null; try { await col('mistakes').doc(id).delete(); toast('Deleted'); } catch (e) { toast(errMsg(e)); } return; }
+    const m = state.mistakes.find(x => x._id === id); if (!m) return;
+    if (act === 'edit') startEdit(m);
+    if (act === 'card') {
+      const front = `${m.trapName ? 'Trap: ' + m.trapName + '\n\n' : ''}${m.sentence || m.lesson}\n\nWhat's the lesson?`;
+      const back = `${m.lesson || ''}${m.heuristic ? '\n\nNext time: ' + m.heuristic : ''}`;
+      try { await addCards('From my misses', [{ front, back, topic: topicOfMistake(m) ? slug(topicOfMistake(m)) : '', src: 'miss' }]); if (m.section !== 'cars') await col('mistakes').doc(id).update({ ankiCard: 'yes' }); toast('Card added to "From my misses"'); } catch (e) { toast(errMsg(e)); }
+    }
+  }
+  function renderRetest(list) {
+    const el = $('retest'); el.hidden = !state.retestOn; if (!state.retestOn) return;
+    const pool = list.filter(m => m.lesson);
+    if (!state.rCurrent || !pool.find(m => m._id === state.rCurrent)) pickRetest(pool);
+    const m = pool.find(x => x._id === state.rCurrent);
+    if (!m) { el.innerHTML = '<div class="card"><p class="empty">Nothing to retest with these filters.</p></div>'; return; }
+    const r = m.retest || {};
+    el.innerHTML = `<div class="card stack" style="gap:12px"><div class="entry-tags">${sectionTag(m.section)}<span class="hint">${esc(m.exam || '')}${m.qnum ? ' · ' + esc(m.qnum) : ''}${topicOfMistake(m) ? ' · ' + esc(topicOfMistake(m)) : ''}</span></div>
+      <div style="font-size:15px;font-weight:550">You missed this one. What was the trap, and what's the rule?</div>
+      ${m.sentence ? `<div class="entry"><p class="ev" style="margin:0;font-size:14px">${esc(m.sentence)}</p></div>` : ''}
+      ${state.rRevealed ? `<div class="stack" style="gap:6px;background:var(--surface-2);border-radius:10px;padding:12px;font-size:13.5px">${m.trapName ? `<div class="tr"><b class="bad">Trap:</b> ${esc(m.trapName)}</div>` : `<div class="tr"><b class="bad">Miss type:</b> ${esc(MISS[m.missType] || '')}</div>`}<div>${esc(m.lesson)}</div>${m.heuristic ? `<div class="tr"><b class="good">Next time:</b> ${esc(m.heuristic)}</div>` : ''}</div>
+        <div class="row">${state.canWrite ? `<button class="btn" data-rt="1">Got it</button><button class="btn ghost" data-rt="0">Still shaky</button>` : ''}<button class="btn ghost" data-rt="skip">Next</button><span class="hint">${r.right || 0}✓ ${r.wrong || 0}✗ so far</span></div>`
+        : `<div class="row"><button class="btn" data-rt="show">Show answer</button><button class="btn ghost" data-rt="skip">Skip</button></div>`}</div>`;
+    el.querySelectorAll('[data-rt]').forEach(b => b.addEventListener('click', async () => {
+      const v = b.dataset.rt;
+      if (v === 'show') { state.rRevealed = true; return renderLog(); }
+      if (v === '1' || v === '0') { const ok = v === '1'; const cur = m.retest || {}; try { await col('mistakes').doc(m._id).update({ retest: { right: (cur.right || 0) + (ok ? 1 : 0), wrong: (cur.wrong || 0) + (ok ? 0 : 1), last: new Date().toISOString() } }); } catch (e) { toast(errMsg(e)); } }
+      pickRetest(pool, m._id); renderLog();
+    }));
+  }
+  function pickRetest(pool, skipId) {
+    state.rRevealed = false;
+    const list = pool.filter(m => m._id !== skipId); const use = list.length ? list : pool;
+    if (!use.length) { state.rCurrent = null; return; }
+    const w = m => { const r = m.retest || {}; const seen = (r.right || 0) + (r.wrong || 0); return Math.max(0.2, 1 + (r.wrong || 0) * 2 + (seen ? 0 : 3) - Math.min(r.right || 0, 3) * 0.3); };
+    let x = Math.random() * use.reduce((a, m) => a + w(m), 0);
+    for (const m of use) { x -= w(m); if (x <= 0) { state.rCurrent = m._id; return; } }
+    state.rCurrent = use[use.length - 1]._id;
+  }
+  $('retest-btn').addEventListener('click', () => { state.retestOn = !state.retestOn; state.rCurrent = null; renderLog(); });
+  function fillTopics(sec, val) { $('m-subtopic').innerHTML = '<option value="">—</option>' + (TOPICS[sec] || []).map(o => `<option${o === val ? ' selected' : ''}>${esc(o)}</option>`).join(''); }
+  function syncFormSection() { const s = $('m-section').value, cars = s === 'cars'; $('m-subtopic-wrap').hidden = cars; $('m-root-wrap').hidden = cars; $('m-anki-wrap').hidden = cars; $('m-passage-wrap').hidden = !cars; fillTopics(s, $('m-subtopic').value); }
+  $('m-section').addEventListener('change', syncFormSection);
+  function startEdit(m) {
+    state.editing = m._id; $('m-section').value = m.section || 'cp'; syncFormSection();
+    $('m-source').value = m.source || 'other'; $('m-exam').value = m.exam || ''; $('m-qnum').value = m.qnum || '';
+    fillTopics(m.section, m.subtopic || ''); $('m-passage').value = m.passageType || 'humanities';
+    $('m-miss').value = m.missType || 'other'; $('m-conf').value = m.confidence || 'confident-wrong';
+    $('m-root').value = m.rootCause || 'content-gap'; $('m-anki').value = m.ankiCard || 'no';
+    $('m-trap').value = m.trapName || ''; $('m-sentence').value = m.sentence || ''; $('m-lesson').value = m.lesson || ''; $('m-heur').value = m.heuristic || '';
+    $('logger').open = true; $('logger-title').textContent = 'Edit mistake'; $('m-submit').textContent = 'Save changes'; $('m-cancel').hidden = false;
+    $('logger').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function resetForm() { state.editing = null; $('m-form').reset(); syncFormSection(); $('logger-title').textContent = 'Log a mistake yourself'; $('m-submit').textContent = 'Save mistake'; $('m-cancel').hidden = true; }
+  $('m-cancel').addEventListener('click', resetForm);
+  $('m-form').addEventListener('submit', async e => {
+    e.preventDefault(); if (!db) return toast('Saving isn’t available in this view');
+    const sec = $('m-section').value, cars = sec === 'cars';
+    if (!$('m-lesson').value.trim()) { toast('Add a lesson so this one is worth reviewing'); return $('m-lesson').focus(); }
+    const body = { section: sec, source: $('m-source').value, exam: $('m-exam').value.trim(), qnum: $('m-qnum').value.trim(), subtopic: cars ? '' : $('m-subtopic').value, passageType: cars ? $('m-passage').value : '', rootCause: cars ? '' : $('m-root').value, ankiCard: cars ? '' : $('m-anki').value, missType: $('m-miss').value, confidence: $('m-conf').value, trapName: $('m-trap').value.trim(), sentence: $('m-sentence').value.trim(), lesson: $('m-lesson').value.trim(), heuristic: $('m-heur').value.trim() };
+    $('m-submit').disabled = true;
+    try { if (state.editing) { await col('mistakes').doc(state.editing).update(body); toast('Saved changes'); } else { body.date = new Date().toISOString(); body.loggedBy = 'you'; await col('mistakes').doc('u' + uid36()).set(body); toast('Logged'); } resetForm(); }
+    catch (err) { toast(errMsg(err)); }
+    $('m-submit').disabled = false;
+  });
+  $('f-search').addEventListener('input', e => { state.search = e.target.value; state.rCurrent = null; renderLog(); });
+  $('export-btn').addEventListener('click', async () => { try { await downloads.save({ filename: 'mcat-hub-' + todayStr() + '.json', data: JSON.stringify({ exported: new Date().toISOString(), settings: state.settings, mistakes: state.mistakes, scores: state.scores, topics: state.topics, cards: allCards() }, null, 2) }); } catch (e) {} });
+
+  // ---------- scores ----------
+  function renderScores() {
+    $('s-logger').hidden = !state.canWrite;
+    const S = [...state.scores].sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const el = $('scores-table');
+    if (!S.length) { el.innerHTML = '<p class="empty">No practice tests yet. Add your first full-length above.</p>'; return; }
+    el.innerHTML = `<table><thead><tr><th>Test</th><th>Date</th><th class="num">CP</th><th class="num">CARS</th><th class="num">BB</th><th class="num">PS</th><th class="num">Total</th><th></th></tr></thead><tbody>${S.map(s => `<tr><td>${esc(s.label)} <span class="tag-o">${esc(SOURCES[s.source] || 'Other')}</span></td><td>${fmtDate(s.date)}</td><td class="num">${s.cp}</td><td class="num">${s.cars}</td><td class="num">${s.bb}</td><td class="num">${s.ps}</td><td class="num"><b>${total(s)}</b></td><td>${state.canWrite ? (state.confirmDel === 's:' + s._id ? `<span class="confirm"><button class="btn danger sm" data-sdel="${esc(s._id)}">Delete</button><button class="btn ghost sm" data-skeep="1">Keep</button></span>` : `<button class="icon-btn" data-sask="${esc(s._id)}">Delete</button>`) : ''}</td></tr>`).join('')}</tbody></table>`;
+    el.querySelectorAll('[data-sask]').forEach(b => b.addEventListener('click', () => { state.confirmDel = 's:' + b.dataset.sask; render(); }));
+    el.querySelectorAll('[data-skeep]').forEach(b => b.addEventListener('click', () => { state.confirmDel = null; render(); }));
+    el.querySelectorAll('[data-sdel]').forEach(b => b.addEventListener('click', async () => { state.confirmDel = null; try { await col('scores').doc(b.dataset.sdel).delete(); toast('Deleted'); } catch (e) { toast(errMsg(e)); } }));
+  }
+  $('s-date').value = todayStr();
+  $('s-form').addEventListener('submit', async e => {
+    e.preventDefault(); if (!db) return toast('Saving isn’t available in this view');
+    const body = { label: $('s-label').value.trim(), date: $('s-date').value, source: $('s-source').value, cp: +$('s-cp').value, cars: +$('s-cars').value, bb: +$('s-bb').value, ps: +$('s-ps').value };
+    $('s-submit').disabled = true;
+    try { await col('scores').doc('s' + uid36()).set(body); toast(`Saved · ${total(body)}`); $('s-form').reset(); $('s-date').value = todayStr(); } catch (err) { toast(errMsg(err)); }
+    $('s-submit').disabled = false;
+  });
+
+  // ---------- plan ----------
+  function phasesFor(days) {
+    if (days == null) return null;
+    const wk = Math.max(0, Math.ceil(days / 7));
+    const flWeeks = Math.min(8, Math.max(2, Math.round(wk * 0.35)));
+    const practice = Math.min(Math.max(0, wk - flWeeks), Math.max(2, Math.round(wk * 0.3)));
+    const content = Math.max(0, wk - flWeeks - practice);
+    return { wk, content, practice, flWeeks };
+  }
+  function renderPlan() {
+    const s = state.settings, d = daysUntil(s.testDate), ph = phasesFor(d);
+    $('set-date').value = s.testDate || ''; $('set-target').value = s.target || ''; $('set-hours').value = s.hours || ''; $('set-new').value = s.newPerDay == null ? '' : s.newPerDay;
+    const top = $('plan-top');
+    if (d == null) top.innerHTML = '<p class="h2">Set your test date</p><p class="hint" style="margin-top:4px">Add it below and the Hub lays out your phases, full-length schedule and weekly focus.</p>';
+    else {
+      const cur = ph.wk - ph.flWeeks <= 0 ? 2 : ph.wk - ph.flWeeks - ph.practice <= 0 ? 1 : 0;
+      const nFL = Math.min(6, ph.flWeeks), flDays = []; for (let i = 0; i < nFL; i++) flDays.push(Math.round(d - 7 - i * Math.max(5, Math.floor((ph.flWeeks * 7 - 7) / Math.max(1, nFL - 1)))));
+      const span = Math.max(d, 1);
+      top.innerHTML = `<div class="countdown"><span class="big">${Math.max(0, d)}</span><span>days until test day · ${fmtDate(s.testDate)}</span></div>
+        <div class="timeline" aria-hidden="true"><div class="track"></div>${flDays.filter(x => x > 0).map(x => `<div class="fl" style="left:calc(${(100 - x / span * 100).toFixed(1)}% - 1px)" title="Full-length ~${x} days out"></div>`).join('')}<div class="today" style="left:0"></div></div>
+        <p class="hint" style="margin-bottom:12px">Orange ticks = suggested full-lengths (${flDays.filter(x => x > 0).length}), last one about a week before test day.</p>
+        <div class="phases">${[['Content review', ph.content, 'Fill gaps topic by topic. Cards daily. Practice sets 2–3× a week.'], ['Practice & passages', ph.practice, 'Timed passage sets, UWorld blocks, deep review of every miss.'], ['Full-length phase', ph.flWeeks, 'One FL a week (AAMC first), full review day after each, then targeted drills.']].map(([n, w, desc], i) => `<div class="phase ${i === cur ? 'now' : ''}"><div class="pn">${i === cur ? 'You are here · ' : ''}${w} week${w === 1 ? '' : 's'}</div><div class="pt">${n}</div><div class="hint" style="margin-top:2px">${desc}</div></div>`).join('')}</div>`;
+    }
+    if (s.onboarded && state.canWrite) {
+      top.insertAdjacentHTML('afterbegin', `<div class="profile-sum" style="margin-bottom:14px"><div class="spread" style="margin-bottom:6px"><b>Your MHUB profile</b><button class="btn ghost sm" id="ob-redo">Update profile</button></div>${s.profileSummary ? `<div>${esc(s.profileSummary)}</div>` : '<div class="hint">Answer the setup questions so the AI can personalize your tutor, topics and plan.</div>'}${s.focus && s.focus.length ? `<ul style="margin:8px 0 0;padding-left:18px">${s.focus.map(f => `<li>${esc(f)}</li>`).join('')}</ul>` : ''}</div>`);
+      $('ob-redo').addEventListener('click', () => { state.showOnboard = true; setTab('dash'); window.scrollTo({ top: 0 }); });
+    }
+    const weak = weakTopics(5), cards = allCards();
+    const hrs = +s.hours || 20;
+    $('plan-week').innerHTML = `<p class="h">This week's focus</p>${weak.length ? `<ol style="margin:0 0 10px;padding-left:20px;font-size:13.5px">${weak.map(t => `<li style="margin-bottom:4px"><button class="icon-btn" style="padding:0;color:var(--text);font-size:13.5px" data-goto="topics" data-topic="${t.id}">${esc(t.name)}</button> <span class="hint" style="display:inline">· ${t.misses} misses · ${MLEVELS[t.mastery]}</span></li>`).join('')}</ol>` : '<p class="hint">Log misses and rate topics to get a focus list.</p>'}
+      <p class="hint">Suggested split for ${hrs} h/week: ${Math.round(hrs * 0.35)} h content on the topics above · ${Math.round(hrs * 0.4)} h timed practice + review · ${Math.round(hrs * 0.25)} h flashcards (${cards.length ? `~${Math.max(1, Math.round((cards.filter(dueNow).length + newLimitLeft()) * 0.6))} min today` : 'import your deck'}).</p>`;
+    $('plan-text').innerHTML = s.planText ? mdToHtml(s.planText) + `<p class="meta">Built ${fmtDate(s.planAt)}</p>` : '<p class="hint">The tutor reads your test date, scores, misses and topic coverage and writes a week-by-week plan. Rebuild it any time.</p>';
+    $('plan-ai').hidden = !sample || !state.canWrite;
+  }
+  $('set-form').addEventListener('submit', async e => { e.preventDefault(); await saveSettings({ testDate: $('set-date').value || '', target: +$('set-target').value || 520, hours: +$('set-hours').value || 0, newPerDay: $('set-new').value === '' ? 20 : +$('set-new').value }); toast('Settings saved'); });
+  $('plan-ai').addEventListener('click', async () => {
+    if (!sample) return; const btn = $('plan-ai'); btn.disabled = true; btn.textContent = 'Building…';
+    const out = $('plan-text'); const today = todayStr();
+    try {
+      const res = await sample(`You are an MCAT coach. Today is ${today}. Write a week-by-week study plan from today to test day for this student, in markdown. Start with a 2-line summary of their biggest score levers. Then one short section per week ("### Week of <date>") with 3-5 bullets: topics (use their weakest topics first), practice (UWorld/AAMC sets), full-lengths (AAMC FLs in the last 6-8 weeks, one per week, review day after each), and flashcard targets. Keep it realistic for their weekly hours. If the test date is missing, plan 12 weeks and say so. Max 700 words.\n\n${contextBlock()}`, { cache: false, onText: ({ text }) => { out.innerHTML = mdToHtml(text); } });
+      await saveSettings({ planText: res.text, planAt: new Date().toISOString() });
+      toast('Plan saved');
+    } catch (e) { toast(e && e.code === 'not_granted' ? 'Allow Claude access to build a plan' : 'Couldn’t build the plan. Try again.'); }
+    btn.disabled = false; btn.textContent = 'Rebuild plan'; renderPlan();
+  });
+  function backupData() { return { app: 'MHUB', version: 1, exported: new Date().toISOString(), settings: state.settings, mistakes: state.mistakes, scores: state.scores, topics: state.topics, cards: allCards() }; }
+  $('bk-export').addEventListener('click', async () => {
+    if (!downloads) return toast('Downloads aren’t available in this view');
+    try { await downloads.save({ filename: 'mhub-backup-' + todayStr() + '.json', data: JSON.stringify(backupData(), null, 1) }); } catch (e) {}
+  });
+  $('bk-import-btn').addEventListener('click', () => $('bk-import').click());
+  $('bk-import').addEventListener('change', async e => {
+    const f = e.target.files[0]; e.target.value = ''; if (!f || !db) return;
+    const st = $('bk-status');
+    try {
+      const b = JSON.parse(await f.text());
+      if (!b || (!b.mistakes && !b.cards && !b.settings)) throw new Error('not a backup');
+      const clean = o => { const x = { ...o }; delete x._id; delete x.cid; delete x.setId; return x; };
+      let n = 0; st.textContent = 'Restoring…';
+      for (const m of (b.mistakes || [])) { const id = String(m._id || 'r' + uid36()).replace(/[^A-Za-z0-9_\-.~:@+]/g, ''); await col('mistakes').doc(id).set(clean(m)); n++; }
+      for (const s of (b.scores || [])) { const id = String(s._id || 's' + uid36()).replace(/[^A-Za-z0-9_\-.~:@+]/g, ''); await col('scores').doc(id).set(clean(s)); }
+      for (const [id, t] of Object.entries(b.topics || {})) { if (TOPIC_BY_ID[id]) await col('topics').doc(id).set({ ...t }); }
+      const sets = {}; (b.cards || []).forEach(c => { const sid = String(c.setId || 'd-' + slug(c.deck || 'My cards')).replace(/[^A-Za-z0-9_\-.~:@+]/g, ''); const s = sets[sid] = sets[sid] || { deck: c.deck || 'My cards', cards: {}, created: Date.now() }; const card = clean(c); delete card.deck; s.cards[c.cid || 'c' + uid36()] = card; });
+      for (const [sid, s] of Object.entries(sets)) await col('cardsets').doc(sid).set(s);
+      if (b.settings) { const s = { ...b.settings }; await settingsRef().set(s); state.settingsExists = true; }
+      st.textContent = `Restored ${n} mistakes, ${(b.scores || []).length} tests, ${Object.keys(b.topics || {}).length} topics and ${(b.cards || []).length} flashcards.`;
+      toast('Backup restored');
+    } catch (err) { st.textContent = 'That file isn’t an MHUB backup.'; }
+  });
+  async function saveSettings(patch, quiet) {
+    if (!db || !state.uid) return; const had = state.settingsExists;
+    state.settings = { ...state.settings, ...patch };
+    try { if (had) await settingsRef().update(patch); else { await settingsRef().set({ ...state.settings }); state.settingsExists = true; } } catch (e) { toast(errMsg(e)); }
+    if (!quiet) render();
+  }
+
+  function errMsg(e) {
+    const c = e && e.code;
+    if (c === 'invalid_argument') return 'You can view this Hub but not change it';
+    if (c === 'quota_exceeded') return 'Storage is full. Export and clear old entries';
+    if (c === 'resource_exhausted') return 'Too many changes at once. Try again in a moment';
+    return 'Couldn’t save. Check your connection and try again';
+  }
+
+  // ---------- boot ----------
+  resetForm();
+  setTab((location.hash || '').slice(1) || ls('mcat-hub-tab') || 'dash');
+  (async () => {
+    const claude = window.claude;
+    if (!claude || !claude.use) { $('db-status').textContent = 'Loading…'; return; }
+    const [d, u, dl, sm, as] = await Promise.all(['db', 'user', 'downloads', 'sample', 'assets'].map(n => claude.use(n).catch(() => null)));
+    db = d; downloads = dl; sample = sm; assets = as; state.sampleChecked = true;
+    if (sample && sample.limits) { try { const lim = await sample.limits(); state.sampleImages = !!(lim && lim.images); } catch (e) { state.sampleImages = false; } }
+    $('t-img').hidden = !state.sampleImages;
+    if (!db || !u) { $('db-status').textContent = 'Sign in to claude.ai to load your Hub.'; state.canWrite = false; render(); return; }
+    state.uid = await u.id();
+    if (!state.uid) { $('db-status').textContent = 'Sign in to claude.ai to load your Hub.'; state.canWrite = false; render(); return; }
+    try { const me = await u.me(); state.name = (me && me.name) || ''; } catch (e) {}
+    try { const w = await u.can('data.write'); if (w === false) state.canWrite = false; } catch (e) {}
+    const pending = new Set(['mistakes', 'scores', 'cardsets', 'topics', 'settings']);
+    const done = k => { if (pending.delete(k) && !pending.size) { state.ready = true; $('db-status').hidden = true; } };
+    const onErr = () => { $('db-status').hidden = false; $('db-status').textContent = 'Lost the connection to your data. Reload to reconnect.'; };
+    let rt; const soon = () => { clearTimeout(rt); rt = setTimeout(render, 60); };
+    col('mistakes').onSnapshot(s => { state.mistakes = s.docs.map(x => ({ ...x.data(), _id: x.id })); done('mistakes'); soon(); }, onErr);
+    col('scores').onSnapshot(s => { state.scores = s.docs.map(x => ({ ...x.data(), _id: x.id })); done('scores'); soon(); }, onErr);
+    col('cardsets').onSnapshot(s => { state.cardsets = s.docs.map(x => ({ ...x.data(), _id: x.id })); done('cardsets'); if (state.tab !== 'cards' || !state.study) soon(); else renderHeader(); }, onErr);
+    col('topics').onSnapshot(s => { const t = {}; s.docs.forEach(x => { t[x.id] = x.data(); }); state.topics = t; done('topics'); if (!(state.tab === 'topics' && document.activeElement && document.activeElement.id === 'td-notes')) soon(); }, onErr);
+    settingsRef().onSnapshot(s => { state.settingsExists = s.exists; state.settings = s.exists ? { ...s.data() } : {}; done('settings'); soon(); }, onErr);
+  })();
+})();
+</script>
+
+</body>
+</html>
