@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>MHUB · AI MCAT study hub that personalizes to you</title>
+<meta property="og:title" content="MHUB · AI MCAT study hub">
+<meta property="og:description" content="An AI tutor that knows your mistakes, a trap log, spaced-repetition flashcards with Anki import, a topic map and a countdown plan, set up around you.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%2312151C'/%3E%3Ctext x='32' y='44' font-family='Arial Black,Arial' font-size='34' font-weight='900' text-anchor='middle' fill='%23fff'%3EM%3C/text%3E%3Ccircle cx='50' cy='42' r='4' fill='%232F5BEA'/%3E%3C/svg%3E">
+
+<meta name="description" content="MHUB is an AI MCAT study hub that personalizes itself to you: a tutor that knows your mistakes, a trap log, spaced-repetition flashcards with Anki import, a topic map, score tracking and a countdown plan.">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: centered 1080px column; hero = headline + draggable MCAT score ruler; then demos, features, steps, FAQ. */
+:root {
+  --bg: #F6F7F9; --surface: #FFFFFF; --surface-2: #EEF0F4; --border: #E1E4EA; --border-strong: #C5CAD3;
+  --ink: #12151C; --ink-2: #5A6170; --ink-3: #848A99;
+  --blue: #2F5BEA; --blue-soft: #E7EDFD; --orange: #D9662C; --orange-soft: #FBEBE2;
+  --green: #24794A; --green-soft: #E3F3EA; --red: #B23A3A; --red-soft: #FAE6E6;
+  --on-ink: #FFFFFF;
+  --display: "Bricolage Grotesque", "Hanken Grotesk", -apple-system, "Segoe UI", sans-serif;
+  --body: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0F1115; --surface: #171A20; --surface-2: #1F232B; --border: #2A2F39; --border-strong: #3A404C;
+  --ink: #EDEFF3; --ink-2: #A8AFBD; --ink-3: #7C8494;
+  --blue: #7DA2FF; --blue-soft: #1B2540; --orange: #F29A66; --orange-soft: #3A2417;
+  --green: #7FD3A2; --green-soft: #15301F; --red: #F2A0A0; --red-soft: #3A1C1C;
+  --on-ink: #0F1115; color-scheme: dark;
+} }
+:root[data-theme="dark"] {
+  --bg: #0F1115; --surface: #171A20; --surface-2: #1F232B; --border: #2A2F39; --border-strong: #3A404C;
+  --ink: #EDEFF3; --ink-2: #A8AFBD; --ink-3: #7C8494;
+  --blue: #7DA2FF; --blue-soft: #1B2540; --orange: #F29A66; --orange-soft: #3A2417;
+  --green: #7FD3A2; --green-soft: #15301F; --red: #F2A0A0; --red-soft: #3A1C1C;
+  --on-ink: #0F1115; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } * { transition: none !important; animation: none !important; } }
+body { background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 16px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1080px; margin: 0 auto; padding-inline: 20px; }
+a { color: inherit; }
+:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; border-radius: 6px; }
+
+/* nav */
+nav.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--border); }
+nav.top .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; height: 60px; }
+.logo { font-family: var(--display); font-weight: 800; font-size: 22px; letter-spacing: -0.03em; text-decoration: none; }
+.logo span { color: var(--blue); }
+.nav-links { display: flex; gap: 22px; align-items: center; font-size: 14.5px; color: var(--ink-2); }
+.nav-links a { text-decoration: none; }
+.nav-links a:hover { color: var(--ink); }
+@media (max-width: 720px) { .nav-links .hide-sm { display: none; } }
+.btn { display: inline-flex; align-items: center; gap: 8px; font: inherit; font-weight: 600; font-size: 15px; padding: 11px 18px; border-radius: 12px; border: 1px solid var(--ink); background: var(--ink); color: var(--on-ink); text-decoration: none; cursor: pointer; white-space: nowrap; }
+.btn:hover { transform: translateY(-1px); }
+.btn.ghost { background: transparent; color: var(--ink); border-color: var(--border-strong); }
+.btn.sm { padding: 8px 14px; font-size: 14px; border-radius: 10px; }
+.btn .arr { transition: transform .15s; } .btn:hover .arr { transform: translateX(3px); }
+
+/* hero */
+.hero { padding-block: 72px 40px; }
+.eyebrow { font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; color: var(--blue); text-transform: uppercase; }
+h1 { font-family: var(--display); font-weight: 800; font-size: clamp(40px, 7.2vw, 84px); line-height: .98; letter-spacing: -0.045em; margin: 14px 0 20px; text-wrap: balance; max-width: 15ch; }
+h1 em { font-style: normal; color: var(--blue); }
+.lede { font-size: clamp(17px, 2vw, 20px); color: var(--ink-2); max-width: 56ch; margin: 0 0 28px; }
+.cta-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.cta-note { font-size: 13.5px; color: var(--ink-3); }
+
+/* ruler */
+.ruler-card { margin-top: 56px; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 24px 24px 20px; }
+.ruler-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin-bottom: 18px; }
+.ruler-head .q { font-size: 14px; color: var(--ink-2); }
+.ruler-head .val { font-family: var(--display); font-weight: 800; font-size: 56px; line-height: 1; letter-spacing: -0.04em; font-variant-numeric: tabular-nums; }
+.ruler { position: relative; height: 64px; touch-action: none; cursor: pointer; user-select: none; }
+.ruler .ticks { position: absolute; inset: 0 0 22px 0; display: flex; justify-content: space-between; align-items: flex-end; }
+.ruler .ticks i { width: 1px; background: var(--border-strong); height: 10px; }
+.ruler .ticks i.maj { height: 22px; background: var(--ink-3); }
+.ruler .lbls { position: absolute; left: 0; right: 0; bottom: 0; height: 18px; font-family: var(--mono); font-size: 11.5px; color: var(--ink-3); }
+.ruler .lbls span { position: absolute; transform: translateX(-50%); }
+.ruler .fill { position: absolute; left: 0; bottom: 22px; height: 4px; background: var(--blue); border-radius: 2px; }
+.ruler .knob { position: absolute; bottom: 12px; width: 26px; height: 26px; margin-left: -13px; border-radius: 50%; background: var(--surface); border: 3px solid var(--blue); box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+.ruler input { position: absolute; inset: 0; opacity: 0; width: 100%; cursor: pointer; }
+.pace { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 10px; margin-top: 18px; }
+@media (max-width: 600px) { .pace { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+.pace div { background: var(--surface-2); border-radius: 12px; padding: 10px 12px; }
+.pace b { display: block; font-family: var(--mono); font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.pace small { color: var(--ink-2); font-size: 12.5px; }
+.ruler-foot { font-size: 13.5px; color: var(--ink-3); margin-top: 12px; }
+
+/* sections */
+section.blk { padding-block: 72px; border-top: 1px solid var(--border); }
+h2 { font-family: var(--display); font-weight: 700; font-size: clamp(28px, 4vw, 44px); line-height: 1.05; letter-spacing: -0.035em; margin: 10px 0 14px; text-wrap: balance; max-width: 22ch; }
+.sec-lede { color: var(--ink-2); max-width: 60ch; margin: 0 0 32px; font-size: 17px; }
+
+/* trap demo */
+.trap-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 20px; align-items: start; }
+@media (max-width: 820px) { .trap-grid { grid-template-columns: minmax(0,1fr); } }
+.qcard { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 22px; min-width: 0; }
+.qmeta { display: flex; justify-content: space-between; gap: 8px; font-family: var(--mono); font-size: 12px; color: var(--ink-3); margin-bottom: 12px; }
+.qstem { font-size: 17px; font-weight: 500; margin: 0 0 16px; }
+.opts { display: flex; flex-direction: column; gap: 8px; }
+.opt { display: flex; gap: 12px; align-items: flex-start; text-align: left; font: inherit; font-size: 15px; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--border-strong); background: var(--surface); color: var(--ink); cursor: pointer; }
+.opt:hover:not(:disabled) { border-color: var(--ink-3); }
+.opt .l { font-family: var(--mono); font-weight: 700; color: var(--ink-3); }
+.opt.right { border-color: var(--green); background: var(--green-soft); }
+.opt.wrong { border-color: var(--red); background: var(--red-soft); }
+.opt:disabled { cursor: default; }
+.qnav { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; gap: 10px; flex-wrap: wrap; }
+.dots { display: flex; gap: 6px; } .dots i { width: 8px; height: 8px; border-radius: 50%; background: var(--border-strong); } .dots i.on { background: var(--ink); }
+.logcard { background: var(--surface); border: 1px dashed var(--border-strong); border-radius: 18px; padding: 22px; min-width: 0; }
+.logcard.filled { border-style: solid; }
+.logcard .lh { font-family: var(--mono); font-size: 12px; color: var(--ink-3); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 12px; }
+.logline { margin: 0 0 10px; font-size: 15px; }
+.logline b { font-weight: 700; }
+.logline .trap { color: var(--red); } .logline .rule { color: var(--green); }
+.chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 20px; background: var(--blue-soft); color: var(--blue); margin-right: 6px; }
+
+/* features */
+.features { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 18px; overflow: hidden; }
+@media (max-width: 820px) { .features { grid-template-columns: repeat(2, minmax(0,1fr)); } }
+@media (max-width: 540px) { .features { grid-template-columns: minmax(0,1fr); } }
+.feat { background: var(--surface); padding: 24px; min-width: 0; }
+.feat .ic { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--surface-2); margin-bottom: 14px; }
+.feat .ic svg { width: 20px; height: 20px; stroke: var(--ink); fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.feat h3 { font-family: var(--display); font-size: 19px; letter-spacing: -0.02em; margin: 0 0 6px; }
+.feat p { margin: 0; color: var(--ink-2); font-size: 15px; }
+
+/* steps */
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 20px; counter-reset: s; }
+@media (max-width: 760px) { .steps { grid-template-columns: minmax(0,1fr); } }
+.step { padding-top: 18px; border-top: 2px solid var(--ink); }
+.step .n { font-family: var(--mono); font-size: 13px; color: var(--blue); }
+.step h3 { font-family: var(--display); font-size: 21px; letter-spacing: -0.02em; margin: 6px 0 6px; }
+.step p { margin: 0; color: var(--ink-2); font-size: 15px; }
+
+/* personalize */
+.persona { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 28px; align-items: center; }
+@media (max-width: 820px) { .persona { grid-template-columns: minmax(0,1fr); } }
+.qa { background: var(--surface); border: 1px solid var(--border); border-radius: 18px; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.qa .row { display: flex; flex-direction: column; gap: 6px; }
+.qa .k { font-size: 13px; color: var(--ink-3); }
+.qa .pills { display: flex; gap: 6px; flex-wrap: wrap; }
+.qa .pills span { font-size: 13px; padding: 4px 11px; border-radius: 20px; border: 1px solid var(--border-strong); }
+.qa .pills span.on { background: var(--ink); color: var(--on-ink); border-color: var(--ink); }
+.qa .out { background: var(--blue-soft); color: var(--ink); border-radius: 12px; padding: 12px 14px; font-size: 14.5px; }
+.qa .out b { color: var(--blue); }
+
+/* faq */
+.faq { display: flex; flex-direction: column; border-top: 1px solid var(--border); max-width: 780px; }
+.faq details { border-bottom: 1px solid var(--border); padding: 16px 0; }
+.faq summary { cursor: pointer; font-weight: 600; font-size: 17px; list-style: none; display: flex; justify-content: space-between; gap: 12px; }
+.faq summary::-webkit-details-marker { display: none; }
+.faq summary::after { content: "+"; font-family: var(--mono); color: var(--ink-3); }
+.faq details[open] summary::after { content: "−"; }
+.faq p { color: var(--ink-2); margin: 10px 0 0; max-width: 65ch; }
+
+/* final cta */
+.final { padding-block: 88px; text-align: left; border-top: 1px solid var(--border); }
+.final h2 { font-size: clamp(34px, 5.5vw, 64px); max-width: 16ch; }
+footer { border-top: 1px solid var(--border); padding-block: 28px 40px; font-size: 13px; color: var(--ink-3); }
+footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+</style>
+<style>[hidden]{display:none!important}body{margin:0}img{max-width:100%}</style>
+</head>
+<body>
+
+<nav class="top"><div class="wrap">
+  <a class="logo" href="#top">MHUB<span>.</span></a>
+  <div class="nav-links"><a class="hide-sm" href="#demo">Try it</a><a class="hide-sm" href="#features">Features</a><a class="hide-sm" href="#faq">FAQ</a><a class="btn sm hub-link" href="#">Open MHUB <span class="arr">→</span></a></div>
+</div></nav>
+
+<main id="top">
+  <header class="hero wrap">
+    <div class="eyebrow">AI MCAT study hub</div>
+    <h1>Every miss becomes a <em>rule</em>.</h1>
+    <p class="lede">MHUB learns how you study, names the trap behind every question you get wrong, and turns it into a habit. Tutor, flashcards, topic map and score plan in one place, set up around you by AI.</p>
+    <div class="cta-row"><a class="btn hub-link" href="#">Create your MHUB <span class="arr">→</span></a><a class="btn ghost" href="#demo">Try a trap question</a><span class="cta-note">Free with a Claude account</span></div>
+
+    <div class="ruler-card" aria-label="Score target picker">
+      <div class="ruler-head"><div><div class="q">Drag to your target score</div><div class="val" id="tval">515</div></div><div class="q" id="tnote" style="text-align:right;max-width:30ch"></div></div>
+      <div class="ruler" id="ruler">
+        <div class="ticks" id="ticks"></div>
+        <div class="fill" id="tfill"></div>
+        <div class="knob" id="tknob"></div>
+        <div class="lbls" id="tlbls"></div>
+        <input type="range" id="trange" min="472" max="528" value="515" aria-label="Target MCAT score">
+      </div>
+      <div class="pace" id="pace"></div>
+      <p class="ruler-foot">Each section is scored 118–132. MHUB tracks your full-lengths against this pace and points you at the section with the most room to gain.</p>
+    </div>
+  </header>
+
+  <section class="blk" id="demo"><div class="wrap">
+    <div class="eyebrow">Try it</div>
+    <h2>Spot the trap. MHUB logs the lesson.</h2>
+    <p class="sec-lede">Three original practice questions. Pick an answer and watch what MHUB saves to your log: the trap that caught you and the rule that beats it next time.</p>
+    <div class="trap-grid">
+      <div class="qcard" id="qcard"></div>
+      <div class="logcard" id="logcard"><div class="lh">Your trap log</div><p style="color:var(--ink-3);margin:0">Answer a question to see what MHUB saves.</p></div>
+    </div>
+  </div></section>
+
+  <section class="blk" id="features"><div class="wrap">
+    <div class="eyebrow">Inside your hub</div>
+    <h2>Everything your prep needs, connected.</h2>
+    <p class="sec-lede">Your misses feed your flashcards, your flashcards feed your topic map, and the tutor reads all of it.</p>
+    <div class="features">
+      <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M4 5h16v10H8l-4 4z"/><path d="M8 9h8M8 12h5"/></svg></div><h3>A tutor that knows you</h3><p>Explains, quizzes and writes practice passages from your own misses and weak topics. Paste a screenshot of a question you got wrong.</p></div>
+      <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M12 3l9 16H3z"/><path d="M12 10v4M12 17h.01"/></svg></div><h3>Trap log</h3><p>Every miss gets a named trap and a 10-second rule. Repeat patterns surface on their own, so you stop making the same mistake.</p></div>
+      <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="6" width="14" height="12" rx="2"/><path d="M7 3h12a2 2 0 0 1 2 2v10"/></svg></div><h3>Flashcards</h3><p>Spaced repetition built in. Import your Anki deck, turn any miss into a card, or let the tutor write cards for your gaps.</p></div>
+      <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg></div><h3>Topic map</h3><p>Every content chapter across the four sections, colored by how well you know it, with your notes, files and misses attached.</p></div>
+      <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><path d="M3 17l5-5 4 3 8-8"/><path d="M15 7h5v5"/></svg></div><h3>Score trend</h3><p>Log full-lengths and see your trend against your target, section by section, with the biggest lever called out.</p></div>
+      <div class="feat"><div class="ic"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div><h3>Plan and countdown</h3><p>Content, practice and full-length phases sized to your test date and weekly hours, plus a week-by-week plan the AI keeps current.</p></div>
+    </div>
+  </div></section>
+
+  <section class="blk"><div class="wrap persona">
+    <div>
+      <div class="eyebrow">Personalized by AI</div>
+      <h2>Two minutes of questions. A hub built for you.</h2>
+      <p class="sec-lede" style="margin-bottom:0">When you create your MHUB, the AI asks about your test date, scores, weak spots, resources and how you learn. It then rates your topics, tunes your tutor's style, writes your plan and makes your first flashcards. Your data is private to your account.</p>
+    </div>
+    <div class="qa" aria-label="Example of the setup questions">
+      <div class="row"><span class="k">How strong is each section?</span><div class="pills"><span>CARS · Shaky</span><span class="on">B/B · OK</span><span>C/P · Strong</span><span>P/S · Weak</span></div></div>
+      <div class="row"><span class="k">How do you learn best?</span><div class="pills"><span class="on">Worked examples</span><span class="on">Quiz me first</span><span>Analogies</span><span>Diagrams</span></div></div>
+      <div class="row"><span class="k">Tutor tone</span><div class="pills"><span class="on">Casual and direct</span><span>Encouraging</span><span>Strict coach</span></div></div>
+      <div class="out"><b>Your MHUB:</b> P/S first. Quiz-first sessions on Behavioral Sci 8 and 10, worked examples for enzyme kinetics, 4 AAMC full-lengths in your last 6 weeks.</div>
+    </div>
+  </div></section>
+
+  <section class="blk"><div class="wrap">
+    <div class="eyebrow">How it works</div>
+    <h2>From signup to studying in five minutes.</h2>
+    <div class="steps" style="margin-top:28px">
+      <div class="step"><div class="n">01</div><h3>Open MHUB</h3><p>Sign in with a free Claude account. Your hub and everything in it is private to you.</p></div>
+      <div class="step"><div class="n">02</div><h3>Answer the setup</h3><p>The AI builds your profile, topic map, tutor style, plan and starter flashcards from your answers.</p></div>
+      <div class="step"><div class="n">03</div><h3>Study and log</h3><p>Do your AAMC and UWorld practice. Send each miss to the tutor; MHUB logs the trap and schedules the review.</p></div>
+    </div>
+  </div></section>
+
+  <section class="blk" id="faq"><div class="wrap">
+    <div class="eyebrow">FAQ</div>
+    <h2>Questions</h2>
+    <div class="faq">
+      <details><summary>Is MHUB free?</summary><p>MHUB itself is free. It runs inside Claude, so you sign in with a Claude account, and the AI tutor uses your own Claude plan's usage.</p></details>
+      <details><summary>Who can see my data?</summary><p>Only you. Each account's mistakes, scores, flashcards, notes and settings are stored privately for that account.</p></details>
+      <details><summary>Can I bring my Anki deck?</summary><p>Yes. Export it from Anki as "Notes in Plain Text (.txt)" and import it in the Flashcards tab. Reviews use spaced repetition inside MHUB.</p></details>
+      <details><summary>Does it include AAMC or UWorld questions?</summary><p>No. MHUB works alongside the practice you already use. The tutor writes original MCAT-style questions, and your log stores your own notes on what you missed.</p></details>
+      <details><summary>Does it work on my phone?</summary><p>Yes. MHUB works in any modern browser on phone, tablet or computer.</p></details>
+    </div>
+  </div></section>
+
+  <section class="final"><div class="wrap">
+    <div class="eyebrow">Ready</div>
+    <h2>Stop repeating the same mistakes.</h2>
+    <div class="cta-row" style="margin-top:24px"><a class="btn hub-link" href="#">Create your MHUB <span class="arr">→</span></a><span class="cta-note">Takes about five minutes to set up</span></div>
+  </div></section>
+</main>
+
+<footer><div class="wrap"><span>© <span id="yr"></span> MHUB</span><span>MHUB is an independent study tool and is not affiliated with or endorsed by the AAMC or UWorld. MCAT is a registered trademark of the AAMC.</span></div></footer>
+
+<script>
+(function () {
+  const HUB = 'https://claude.ai/artifact/XnXFUXoPTjgZAcDm5YoZfx';
+  document.querySelectorAll('.hub-link').forEach(a => { a.href = HUB; a.target = '_blank'; a.rel = 'noopener'; });
+  document.getElementById('yr').textContent = new Date().getFullYear();
+
+  // ---- score ruler ----
+  const MIN = 472, MAX = 528;
+  const range = document.getElementById('trange'), ticks = document.getElementById('ticks'), lbls = document.getElementById('tlbls');
+  for (let v = MIN; v <= MAX; v += 2) { const i = document.createElement('i'); if ((v - MIN) % 8 === 0) i.className = 'maj'; ticks.appendChild(i); }
+  for (let v = MIN; v <= MAX; v += 8) { const s = document.createElement('span'); s.textContent = v; s.style.left = ((v - MIN) / (MAX - MIN) * 100) + '%'; lbls.appendChild(s); }
+  const names = [['C/P', 'Chem/Phys'], ['CARS', 'CARS'], ['B/B', 'Bio/Biochem'], ['P/S', 'Psych/Soc']];
+  function note(t) {
+    if (t >= 524) return 'Near-perfect. Almost no room for misses in any section.';
+    if (t >= 518) return 'Elite range. Every section has to be strong, so the weakest one decides it.';
+    if (t >= 510) return 'Very competitive. Usually one strong section can carry one shakier section.';
+    if (t >= 500) return 'The middle of the scale is 500. Steady gains come from fixing repeat traps.';
+    return 'A focused plan and a clean trap log make the first 10 points the fastest.';
+  }
+  function update() {
+    const t = +range.value, p = (t - MIN) / (MAX - MIN) * 100;
+    document.getElementById('tval').textContent = t;
+    document.getElementById('tfill').style.width = p + '%';
+    document.getElementById('tknob').style.left = p + '%';
+    document.getElementById('tnote').textContent = note(t);
+    const base = Math.floor(t / 4), extra = t - base * 4;
+    document.getElementById('pace').innerHTML = names.map((n, i) => `<div><small>${n[1]}</small><b>${base + (i < extra ? 1 : 0)}</b></div>`).join('');
+  }
+  range.addEventListener('input', update); update();
+
+  // ---- trap demo ----
+  const QS = [
+    { sec: 'Psych/Soc · research design', stem: 'In a survey of 2,000 undergraduates, students who slept more hours per night reported higher GPAs. Which conclusion is best supported?',
+      opts: ['Getting more sleep causes students to earn higher grades.', 'Hours of sleep and GPA are positively associated in this sample.', 'Students with higher GPAs feel less stress, so they sleep more.', 'Sleep has no meaningful relationship with academic performance.'], ans: 1,
+      trap: 'Causation from a correlation', rule: 'Observational data only supports "associated with." Any answer that says "causes" needs an experiment.', why: { 0: 'A survey can’t show cause. No variable was manipulated.', 2: 'This invents a mechanism the data never tested.', 3: 'Contradicts the data shown.' } },
+    { sec: 'CARS · author’s view', stem: 'An author writes: “Some modern architecture trades comfort for spectacle, producing buildings admired more than they are enjoyed.” The author would most likely agree that:',
+      opts: ['Modern architecture is uncomfortable.', 'Spectacle has no place in good design.', 'In some modern buildings, visual impact comes at the cost of comfort.', 'Architects should return to classical styles.'], ans: 2,
+      trap: 'Extreme qualifier', rule: '"Some" in the passage kills "all," "never" and unqualified claims in the answer. Match the author’s scope.', why: { 0: 'The author said "some," not all modern architecture.', 1: 'The author never says spectacle has no value.', 3: 'Classical styles are never mentioned. Out of scope.' } },
+    { sec: 'Bio/Biochem · enzymes', stem: 'A competitive inhibitor is added to an enzyme-catalyzed reaction. Compared with the uninhibited reaction, which change is expected?',
+      opts: ['Vmax decreases and Km is unchanged.', 'Km increases and Vmax is unchanged.', 'Both Km and Vmax decrease.', 'Km decreases and Vmax increases.'], ans: 1,
+      trap: 'Right concept, wrong inhibitor', rule: 'Competitive inhibitors compete for the active site, so enough substrate outcompetes them: Vmax survives, apparent Km rises.', why: { 0: 'That is noncompetitive inhibition.', 2: 'That pattern fits uncompetitive inhibition.', 3: 'No inhibitor raises Vmax.' } }
+  ];
+  let qi = 0; const answered = {};
+  const qcard = document.getElementById('qcard'), log = document.getElementById('logcard');
+  function renderQ() {
+    const q = QS[qi], a = answered[qi];
+    qcard.innerHTML = `<div class="qmeta"><span>${q.sec}</span><span>Question ${qi + 1} of ${QS.length}</span></div><p class="qstem">${q.stem}</p>
+      <div class="opts">${q.opts.map((o, i) => `<button class="opt ${a != null ? (i === q.ans ? 'right' : i === a ? 'wrong' : '') : ''}" data-i="${i}" ${a != null ? 'disabled' : ''}><span class="l">${'ABCD'[i]}</span><span>${o}</span></button>`).join('')}</div>
+      <div class="qnav"><div class="dots">${QS.map((_, i) => `<i class="${i === qi ? 'on' : ''}"></i>`).join('')}</div><span style="display:flex;gap:8px">${qi > 0 ? '<button class="btn ghost sm" id="qprev">Back</button>' : ''}${qi < QS.length - 1 ? `<button class="btn sm" id="qnext" ${a == null ? 'disabled style="opacity:.45"' : ''}>Next question</button>` : (a != null ? '<a class="btn sm hub-link" href="' + HUB + '" target="_blank" rel="noopener">Start logging yours →</a>' : '')}</span></div>`;
+    qcard.querySelectorAll('.opt').forEach(b => b.addEventListener('click', () => { answered[qi] = +b.dataset.i; renderQ(); renderLog(); }));
+    const n = document.getElementById('qnext'); if (n) n.addEventListener('click', () => { if (answered[qi] != null) { qi++; renderQ(); renderLog(); } });
+    const p = document.getElementById('qprev'); if (p) p.addEventListener('click', () => { qi--; renderQ(); renderLog(); });
+  }
+  function renderLog() {
+    const q = QS[qi], a = answered[qi];
+    if (a == null) { log.className = 'logcard'; log.innerHTML = '<div class="lh">Your trap log</div><p style="color:var(--ink-3);margin:0">Answer the question to see what MHUB saves.</p>'; return; }
+    log.className = 'logcard filled';
+    if (a === q.ans) log.innerHTML = `<div class="lh">Correct · nothing to log</div><p class="logline"><b>Nice.</b> You avoided the trap most people fall for here:</p><p class="logline"><b class="trap">Trap:</b> ${q.trap}</p><p class="logline"><b class="rule">Rule:</b> ${q.rule}</p>`;
+    else log.innerHTML = `<div class="lh">Saved to your trap log</div><p style="margin:0 0 12px"><span class="chip">${q.sec.split(' · ')[0]}</span><span class="chip" style="background:var(--surface-2);color:var(--ink-2)">${q.sec.split(' · ')[1]}</span></p><p class="logline"><b>You picked ${'ABCD'[a]}.</b> ${q.why[a] || ''}</p><p class="logline"><b class="trap">Trap:</b> ${q.trap}</p><p class="logline"><b class="rule">Next time:</b> ${q.rule}</p><p style="font-size:13px;color:var(--ink-3);margin:12px 0 0">In MHUB this also becomes a flashcard and counts toward your repeat patterns.</p>`;
+  }
+  renderQ(); renderLog();
+})();
+</script>
+
+</body>
+</html>
