@@ -178,6 +178,25 @@
     $('np-form').addEventListener('submit', async e => { e.preventDefault(); const { error } = await sb.auth.updateUser({ password: $('np-pass').value }); const m = $('acct-msg'); if (error) { m.className = 'msg err'; m.textContent = friendly(error); } else { m.textContent = 'Password saved.'; setTimeout(closeModal, 900); } });
   }
 
+  // Data saved on this device before signing in: ask before it goes into the account.
+  function askAboutDeviceData() {
+    const owner = L.owner();
+    if (owner === session.user.id) return Promise.resolve('keep');
+    const local = L.allDocs().filter(d => !d.deleted);
+    if (owner || !local.length) { if (owner) L.clear(); return Promise.resolve('none'); }
+    const count = p => local.filter(d => d.path.includes('/hub/' + p + '/')).length;
+    return new Promise(resolve => {
+      const o = modal(`<h2>This browser has MHUB data</h2>
+        <div class="msg">${count('mistakes')} mistakes, ${count('scores')} practice tests and ${count('cardsets')} flashcard decks are saved here from before you signed in. Add them to your account?</div>
+        <div class="row"><button class="btn" id="dd-add">Add to my account</button><button class="btn ghost" id="dd-skip">Don’t add</button></div>
+        <p class="hint" style="font-size:12px">“Don’t add” removes them from this browser and loads only what’s in your account. To keep a copy, cancel by closing this, then use Plan → Download backup first.</p>`);
+      const done = v => { document.removeEventListener('keydown', escClose); o.remove(); resolve(v); };
+      $('dd-add').addEventListener('click', () => done('add'));
+      $('dd-skip').addEventListener('click', () => { L.clear(); done('skip'); });
+      o.addEventListener('click', async e => { if (e.target === o) { await sb.auth.signOut(); session = null; renderBtn(); o.remove(); location.reload(); } });
+    });
+  }
+
   // ---------- boot ----------
   function start() {
     if (!enabled) return; // no config yet: MHUB stays device-only
@@ -191,12 +210,13 @@
       if (event === 'PASSWORD_RECOVERY') return openNewPassword();
       if (event === 'SIGNED_IN' && !was) {
         closeModal();
+        await askAboutDeviceData();
         try { const r = await fullSync(); if (r && (r.pulled || r.pushed)) { toast('Signed in. Your MHUB is synced.'); setTimeout(() => location.reload(), 500); } else toast('Signed in'); }
         catch (e) { toast('Signed in, but sync failed. Try “Sync now”.'); }
       }
       if (event === 'INITIAL_SESSION' && s) {
         if (L.owner() === s.user.id) quickPull();
-        else { try { await fullSync(); location.reload(); } catch (e) {} }
+        else { await askAboutDeviceData(); try { await fullSync(); location.reload(); } catch (e) {} }
       }
     });
     window.addEventListener('focus', quickPull);
