@@ -4,7 +4,11 @@
   const KEY = 'mhub-db-v1';
   let store = {};
   try { store = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) { store = {}; }
+  store.__ts = store.__ts || {};   // full doc path -> last local change (ms)
+  store.__del = store.__del || {}; // full doc path -> deletion time (ms)
   let saveTimer = null;
+  const writeHooks = [];
+  function touched(fullPath, deleted) { const t = Date.now(); store.__ts[fullPath] = t; if (deleted) store.__del[fullPath] = t; else delete store.__del[fullPath]; writeHooks.forEach(h => h(fullPath)); }
   function persist() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
@@ -26,9 +30,9 @@
     return {
       id, path,
       async get() { return snapDoc(id, (store[c] || {})[id]); },
-      async set(data) { if (!isObj(data)) throw err('invalid_argument', 'body must be an object'); (store[c] = store[c] || {})[id] = clone(data); persist(); notify(c); },
-      async update(data) { const cur = (store[c] || {})[id]; if (cur === undefined) throw err('invalid_argument', 'document does not exist'); store[c][id] = deepMerge(cur, data); persist(); notify(c); },
-      async delete() { if (store[c]) { delete store[c][id]; persist(); notify(c); } },
+      async set(data) { if (!isObj(data)) throw err('invalid_argument', 'body must be an object'); (store[c] = store[c] || {})[id] = clone(data); touched(path); persist(); notify(c); },
+      async update(data) { const cur = (store[c] || {})[id]; if (cur === undefined) throw err('invalid_argument', 'document does not exist'); store[c][id] = deepMerge(cur, data); touched(path); persist(); notify(c); },
+      async delete() { if (store[c]) { delete store[c][id]; } touched(path, true); persist(); notify(c); },
       onSnapshot(next) { const l = { col: c, fire: () => next(snapDoc(id, (store[c] || {})[id])) }; listeners.add(l); setTimeout(l.fire, 0); return () => listeners.delete(l); },
       collection(sub) { return colRef(path + '/' + sub); }
     };
@@ -59,7 +63,34 @@
     });
   }
   const db = { doc: docRef, collection: colRef };
-  const user = { async id() { return 'local'; }, async me() { return { name: '' }; }, async can() { return true; }, isOwner() { return true; }, canEdit() { return true; } };
+  const profile = { name: '' };
+  const user = { async id() { return 'local'; }, async me() { return { name: profile.name }; }, async can() { return true; }, isOwner() { return true; }, canEdit() { return true; } };
+  const isMeta = k => k.startsWith('__');
+  // Hooks the account sync layer uses
+  window.MHUB_LOCAL = {
+    onWrite(fn) { writeHooks.push(fn); },
+    setName(n) { profile.name = n || ''; },
+    owner() { return store.__owner || null; },
+    setOwner(uid) { store.__owner = uid; persist(); },
+    // every local doc: [{path, data, deleted, ts}]
+    allDocs() {
+      const out = [];
+      Object.keys(store).filter(k => !isMeta(k)).forEach(c => Object.keys(store[c] || {}).forEach(id => { const p = c + '/' + id; out.push({ path: p, data: store[c][id], deleted: false, ts: store.__ts[p] || 0 }); }));
+      Object.keys(store.__del).forEach(p => out.push({ path: p, data: null, deleted: true, ts: store.__del[p] }));
+      return out;
+    },
+    doc(p) { const [c, id] = split(p); const d = (store[c] || {})[id]; return d !== undefined ? { path: p, data: d, deleted: false, ts: store.__ts[p] || 0 } : store.__del[p] ? { path: p, data: null, deleted: true, ts: store.__del[p] } : null; },
+    localTs(p) { return store.__ts[p] || 0; },
+    // apply a remote row without marking it as a local change
+    applyRemote(row) {
+      const [c, id] = split(row.path);
+      if (row.deleted) { if (store[c]) delete store[c][id]; store.__del[row.path] = row.ts; }
+      else { (store[c] = store[c] || {})[id] = row.data; delete store.__del[row.path]; }
+      store.__ts[row.path] = row.ts;
+    },
+    commit() { persist(); Object.keys(store).filter(k => !isMeta(k)).forEach(notify); listeners.forEach(l => l.fire()); },
+    clear() { store = { __ts: {}, __del: {} }; try { localStorage.removeItem(KEY); } catch (e) {} listeners.forEach(l => l.fire()); }
+  };
   const downloads = {
     async save({ filename, data }) {
       const blob = data instanceof Blob ? data : new Blob([data], { type: 'application/json' });

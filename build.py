@@ -5,6 +5,7 @@ import re, pathlib
 root = pathlib.Path(__file__).parent
 body = (root / 'src/hub-body.html').read_text()
 runtime = (root / 'src/local-runtime.js').read_text()
+account = (root / 'src/account.js').read_text()
 CLAUDE_HUB = 'https://claude.ai/artifact/XnXFUXoPTjgZAcDm5YoZfx'
 swaps = {
     '<title>MHUB</title>': '',
@@ -30,6 +31,11 @@ head = f'''<!doctype html>
 <style>[hidden]{{display:none!important}}body{{margin:0}}img{{max-width:100%}}:root{{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}}</style>
 <script>
 {runtime}
+</script>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+{account}
 </script>
 </head>
 <body>
