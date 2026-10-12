@@ -101,5 +101,13 @@ for s in S:
 for s in S:
     for i,q in enumerate(s["questions"]):
         q["id"]=f'{s["id"]}-q{i+1}'; assert len(q["choices"])==4 and len(q["why"])==4 and 0<=q["answer"]<4
-json.dump({"version":1,"updated":"2026-10-12","sets":S},open(__file__.replace('bank/build_bank.py','questions.json'),'w'),ensure_ascii=False,indent=1)
+import glob, os, datetime
+# Weekly additions: each bank/sets/*.json holds one set in the same shape (answers already balanced by the author)
+for f in sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sets', '*.json'))):
+    extra = json.load(open(f))
+    for i, q in enumerate(extra["questions"]):
+        q.setdefault("id", f'{extra["id"]}-q{i+1}'); assert len(q["choices"])==4 and len(q["why"])==4 and 0<=q["answer"]<4, f
+    assert extra["section"] in ("cp","cars","bb","ps") and extra["id"] not in {s["id"] for s in S}, f
+    S.append(extra)
+json.dump({"version":1,"updated":datetime.date.today().isoformat(),"sets":S},open(__file__.replace('bank/build_bank.py','questions.json'),'w'),ensure_ascii=False,indent=1)
 print(len(S),'sets',sum(len(s['questions']) for s in S),'questions')
